@@ -19,12 +19,48 @@ from .mat_conv import (
     mat_conv_recycling_economics_calculated,
     mat_conv_recycling_environment_summary_calculated,
 )
-from .model import Scenario
+from .model import FeedstockInput, Scenario, TransportDistances
 from .preprocessing import (
     preprocessing_black_mass_composition,
     preprocessing_feedstock_composition,
     preprocessing_product_outputs,
 )
+from .reporting import (
+    python_ported_manufacturing_output_summary,
+    python_ported_output_cost_breakdown,
+    python_ported_output_recycling_revenue_table,
+    python_ported_output_summary_table,
+    python_ported_process_stage_output_summary,
+    python_ported_report_comparison,
+    python_ported_stage_summary,
+)
+
+
+def recycling_process_key(label: str) -> str | None:
+    normalized = label.strip().casefold()
+    if "pyro" in normalized:
+        return "Pyro"
+    if "hydro" in normalized:
+        return "Hydro"
+    if normalized == "direct":
+        return "Direct"
+    if normalized == "custom":
+        return "Custom"
+    return None
+
+
+def scenario_validation_messages(scenario: Scenario, text: dict[str, str]) -> list[tuple[str, str]]:
+    messages: list[tuple[str, str]] = []
+    process = recycling_process_key(scenario.recycling_process)
+    if safe_float(scenario.feedstock_tonnes_per_year) <= 0:
+        messages.append(("warning", text["zero_feedstock"]))
+    if scenario.feedstock_type == "Black mass":
+        messages.append(("info", text["black_mass_no_disassembly"]))
+    if process not in {"Pyro", "Hydro", "Direct"}:
+        messages.append(("warning", text["select_process_warning"]))
+    if safe_float(scenario.cathode_throughput_gwh_per_year) <= 0:
+        messages.append(("info", text["cathode_zero"]))
+    return messages
 
 
 def user_table(data: pd.DataFrame) -> pd.DataFrame:
@@ -100,6 +136,125 @@ def scenario_record(scenario: Scenario) -> dict[str, object]:
     }
 
 
+def scenario_from_inputs(
+    *,
+    battery_manufactured: str,
+    throughput_gwh_per_year: float,
+    manufacturing_chemistry: str,
+    manufacturing_location: str,
+    battery_collected: str,
+    feedstock_chemistry: str,
+    feedstock_type: str,
+    feedstock_tonnes_per_year: float,
+    recycling_process: str,
+    cathode_chemistry: str,
+    recycled_content: float,
+    cathode_throughput_gwh_per_year: float,
+    collection_to_disassembly: float,
+    disassembly_to_preprocessor: float,
+    preprocessor_to_cm_recovery: float,
+    manufacturer_to_preprocessor_or_cm_recovery: float,
+    recycler_to_cathode_producer: float,
+    cathode_producer_to_manufacturer: float,
+) -> Scenario:
+    return Scenario(
+        battery_manufactured=battery_manufactured,
+        throughput_gwh_per_year=throughput_gwh_per_year,
+        manufacturing_chemistry=manufacturing_chemistry,
+        manufacturing_location=manufacturing_location,
+        battery_collected=battery_collected,
+        feedstock_chemistry=feedstock_chemistry,
+        feedstock_type=feedstock_type,
+        feedstock_tonnes_per_year=feedstock_tonnes_per_year,
+        recycling_process=recycling_process,
+        cathode_chemistry=cathode_chemistry,
+        recycled_content=recycled_content,
+        cathode_throughput_gwh_per_year=cathode_throughput_gwh_per_year,
+        transport_distances=TransportDistances(
+            collection_to_disassembly=collection_to_disassembly,
+            disassembly_to_preprocessor=disassembly_to_preprocessor,
+            preprocessor_to_cm_recovery=preprocessor_to_cm_recovery,
+            manufacturer_to_preprocessor_or_cm_recovery=manufacturer_to_preprocessor_or_cm_recovery,
+            recycler_to_cathode_producer=recycler_to_cathode_producer,
+            cathode_producer_to_manufacturer=cathode_producer_to_manufacturer,
+        ),
+        feedstocks=(FeedstockInput(feedstock_chemistry, feedstock_type, feedstock_tonnes_per_year),),
+    )
+
+
+def scenario_from_record(record: dict[str, object], fallback: Scenario) -> Scenario:
+    feedstock_records = record.get("feedstocks")
+    feedstocks: tuple[FeedstockInput, ...]
+    if isinstance(feedstock_records, list) and feedstock_records:
+        parsed_feedstocks = []
+        for item in feedstock_records:
+            if not isinstance(item, dict):
+                continue
+            parsed_feedstocks.append(
+                FeedstockInput(
+                    str(item.get("chemistry", fallback.feedstock_chemistry)),
+                    str(item.get("feedstock_type", fallback.feedstock_type)),
+                    safe_float(item.get("tonnes_per_year"), safe_float(fallback.feedstock_tonnes_per_year)),
+                )
+            )
+        feedstocks = tuple(parsed_feedstocks)
+    else:
+        feedstocks = (
+            FeedstockInput(
+                str(record.get("feedstock_chemistry", fallback.feedstock_chemistry)),
+                str(record.get("feedstock_type", fallback.feedstock_type)),
+                safe_float(record.get("feedstock_tonnes_per_year"), safe_float(fallback.feedstock_tonnes_per_year)),
+            ),
+        )
+
+    primary = feedstocks[0] if feedstocks else fallback.feedstocks[0]
+    distances = fallback.transport_distances
+    return Scenario(
+        battery_manufactured=str(record.get("battery_manufactured", fallback.battery_manufactured)),
+        throughput_gwh_per_year=safe_float(record.get("throughput_gwh_per_year"), safe_float(fallback.throughput_gwh_per_year)),
+        manufacturing_chemistry=str(record.get("manufacturing_chemistry", fallback.manufacturing_chemistry)),
+        manufacturing_location=str(record.get("manufacturing_location", fallback.manufacturing_location)),
+        battery_collected=str(record.get("battery_collected", fallback.battery_collected)),
+        feedstock_chemistry=str(record.get("feedstock_chemistry", primary.chemistry)),
+        feedstock_type=str(record.get("feedstock_type", primary.feedstock_type)),
+        feedstock_tonnes_per_year=safe_float(record.get("feedstock_tonnes_per_year"), primary.tonnes_per_year),
+        recycling_process=str(record.get("recycling_process", fallback.recycling_process)),
+        cathode_chemistry=str(record.get("cathode_chemistry", fallback.cathode_chemistry)),
+        recycled_content=safe_float(record.get("recycled_content"), safe_float(fallback.recycled_content)),
+        cathode_throughput_gwh_per_year=safe_float(
+            record.get("cathode_throughput_gwh_per_year"),
+            safe_float(fallback.cathode_throughput_gwh_per_year),
+        ),
+        transport_distances=TransportDistances(
+            collection_to_disassembly=safe_float(
+                record.get("collection_to_disassembly"),
+                distances.collection_to_disassembly,
+            ),
+            disassembly_to_preprocessor=safe_float(
+                record.get("disassembly_to_preprocessor"),
+                distances.disassembly_to_preprocessor,
+            ),
+            preprocessor_to_cm_recovery=safe_float(
+                record.get("preprocessor_to_cm_recovery"),
+                distances.preprocessor_to_cm_recovery,
+            ),
+            manufacturer_to_preprocessor_or_cm_recovery=safe_float(
+                record.get("manufacturer_to_preprocessor_or_cm_recovery"),
+                distances.manufacturer_to_preprocessor_or_cm_recovery,
+            ),
+            recycler_to_cathode_producer=safe_float(
+                record.get("recycler_to_cathode_producer"),
+                distances.recycler_to_cathode_producer,
+            ),
+            cathode_producer_to_manufacturer=safe_float(
+                record.get("cathode_producer_to_manufacturer"),
+                distances.cathode_producer_to_manufacturer,
+            ),
+        ),
+        feedstocks=feedstocks,
+    )
+
+
 def parameter_tables_for_scenario(scenario: Scenario, process: str) -> dict[str, pd.DataFrame]:
     chemistry = cathode_chemistry_for_scenario(scenario)
     scenario_rows = [
@@ -161,6 +316,35 @@ def parameter_tables_for_scenario(scenario: Scenario, process: str) -> dict[str,
     }
 
 
+def calculated_result_tables(scenario: Scenario, process: str) -> dict[str, pd.DataFrame]:
+    return {
+        "stage_summary": python_ported_stage_summary(scenario, process),
+        "manufacturing_summary": python_ported_manufacturing_output_summary(include_workbook=False),
+        "process_stage": python_ported_process_stage_output_summary(scenario, include_workbook=False),
+        "cost_breakdown": python_ported_output_cost_breakdown(include_workbook=False),
+        "recycling_revenue": python_ported_output_recycling_revenue_table(scenario, include_workbook=False),
+        "report_results": python_ported_report_comparison(scenario, include_workbook=False),
+        "output_summary": python_ported_output_summary_table(scenario),
+    }
+
+
+def export_tables_for_scenario(
+    scenario: Scenario,
+    result_tables: dict[str, pd.DataFrame],
+    text: dict[str, str],
+) -> dict[str, pd.DataFrame]:
+    return {
+        text["current_scenario"]: pd.DataFrame([scenario_record(scenario)]),
+        text["stage_summary"]: result_tables["stage_summary"],
+        text["process_stage"]: result_tables["process_stage"],
+        text["cost_breakdown"]: result_tables["cost_breakdown"],
+        text["recycling_revenue"]: result_tables["recycling_revenue"],
+        text["manufacturing_summary"]: result_tables["manufacturing_summary"],
+        text["output_summary"]: result_tables["output_summary"],
+        text["report_results"]: result_tables["report_results"],
+    }
+
+
 def scenario_json_bytes(scenario: Scenario) -> bytes:
     return json.dumps(scenario_record(scenario), indent=2, ensure_ascii=False).encode("utf-8")
 
@@ -198,6 +382,13 @@ def scenario_defaults_from_record(record: dict[str, object], fallback: dict[str,
             defaults["feedstock_type"] = first.get("feedstock_type", defaults["feedstock_type"])
             defaults["feedstock_tonnes"] = first.get("tonnes_per_year", defaults["feedstock_tonnes"])
     return defaults
+
+
+def scenario_defaults_from_json_bytes(data: bytes, fallback: dict[str, object]) -> dict[str, object]:
+    record = json.loads(data.decode("utf-8"))
+    if not isinstance(record, dict):
+        raise ValueError("Scenario JSON must be an object")
+    return scenario_defaults_from_record(record, fallback)
 
 
 def safe_float(value: object, fallback: float = 0.0) -> float:

@@ -4,7 +4,26 @@ from recycle_cost.mat_conv import mat_conv_available_precursors
 from recycle_cost.cathode import cathode_chemistry_for_scenario, cathode_raw_material_cost_summary
 from recycle_cost.transport import scenario_transport_segments, transport_environment_breakdown
 from recycle_cost.mat_conv import mat_conv_recycling_environment_summary_calculated
+from recycle_cost.parameters import get_workbook_default_scenario_parameters, get_workbook_scenario_options
 from recycle_cost.schemas import CommonColumns, AuditColumns, ManufacturingColumns
+
+
+def test_workbook_scenario_parameters_feed_default_model():
+    params = get_workbook_default_scenario_parameters()
+    scenario = default_scenario()
+
+    assert scenario.battery_manufactured == params.battery_manufactured
+    assert scenario.feedstock_chemistry == params.feedstock_chemistry
+    assert scenario.feedstocks[0].chemistry == params.feedstocks[0].chemistry
+    assert scenario.transport_distances.collection_to_disassembly == params.transport_distances.collection_to_disassembly
+
+
+def test_workbook_scenario_options_are_typed():
+    options = get_workbook_scenario_options()
+
+    assert "Pack" in options.battery_manufactured
+    assert "NMC(622)" in options.chemistries
+    assert "Hydrometallurgical" in options.recycling_processes
 
 
 def test_mat_conv_feedstock_chemistry_impact():

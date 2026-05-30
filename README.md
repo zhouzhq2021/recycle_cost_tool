@@ -26,6 +26,29 @@ Current local URL:
 http://localhost:8502
 ```
 
+## Run Scenarios From CLI
+
+Use `scripts/run_scenario.py` to run one or more scenarios without Streamlit and export
+calculated result tables:
+
+```bash
+UV_CACHE_DIR=/tmp/uv-cache uv run python scripts/run_scenario.py \
+  --preset pack_hydro \
+  --out-dir scenario_runs \
+  --include-parameters
+```
+
+Inputs:
+
+- `--preset`: built-in scenario preset. Can be provided multiple times.
+- `--scenario-json`: scenario JSON exported by the app. Can be provided multiple times.
+- `--process`: optional process override: `Pyro`, `Hydro`, `Direct`, or `Custom`.
+- `--include-parameters`: also export current model parameter tables.
+
+Each scenario gets its own output directory with `scenario.json`, `summary.json`, and CSV
+files for stage summary, process-stage output, cost breakdown, recycling revenue,
+manufacturing summary, output summary, and report results.
+
 ## Analysis
 
 The workbook reconnaissance script extracts worksheet metadata, formulas, dependency edges,
@@ -100,317 +123,38 @@ Python-ported modules:
   wrapper for Pyro/Hydro/Direct/Custom columns, and a Python-port stage summary that
   combines currently migrated modules.
 
-## Reproduction Plan
+## Current Roadmap
 
-The migration target is not only to display saved workbook values, but to reproduce the
-EverBatt calculation graph in Python so scenario edits in Streamlit recalculate the same
-technical, cost, and environmental outputs as `EverBatt 2023.xlsm`. Workbook cached values
-remain the regression oracle until the equivalent formula block is fully ported.
+The current app uses Python-calculated tables for user-facing Streamlit workflows and
+keeps workbook snapshots as regression oracles. The detailed module status is tracked in
+`docs/analysis/migration_checklist.md`.
 
-### Guiding Rules
+Remaining work:
 
-- Port one worksheet block at a time, preserving the workbook row/column meaning in
-  narrow, named Python tables.
-- Keep every migrated formula covered by tests against the default workbook snapshot.
-- For formulas depending on user scenario inputs, add at least one synthetic scenario test
-  so the code is not only reading cached workbook values.
-- Keep workbook snapshot readers separate from Python-calculated functions. Snapshot
-  functions are the oracle; Python functions are the replacement.
-- Prefer explicit intermediate tables over one large final formula. This makes future
-  audit against Excel formulas easier.
-- When a workbook formula uses lookups, encode the lookup table and selected key rather
-  than hard-coding a selected cell value.
+- Move remaining workbook-backed constants out of ad hoc cell reads and into typed,
+  grouped parameter objects.
+- Keep snapshot readers confined to tests and developer audit paths.
+- Expand the UI scenario model from a single editable feedstock stream to the full
+  multi-row feedstock model already supported by `Scenario.feedstocks`.
+- Clarify and document the `Custom` route boundary: unsupported, user-specified, or
+  workbook-audit-only.
+- Strengthen scenario validation for incompatible chemistry, process, feedstock, and
+  throughput combinations.
+- Split `app.py` further so translation strings, presets, sidebar scenario construction,
+  validation, result-table assembly, and page layout have separate ownership.
+- Continue replacing local table-schema string literals with shared constants from
+  `schemas.py`.
 
-### Phase 1: Stabilize Workbook Formula Inventory
+Maintenance rules:
 
-Goal: make the remaining Excel migration scope explicit and measurable.
-
-Tasks:
-
-- Extend `scripts/analyze_everbatt.py` outputs with formula counts by worksheet block and
-  by output region.
-- Add a manual formula map for high-value ranges:
-  `Output!B11:H32`, `Output!B37:T59`, `Output!B201:V227`, `Report!AA20:AE46`,
-  `Man Rec Par.`, `Cath. Prod. Par.`, `CM Rec Par.`, and `Preproc. Par.`.
-- Tag formulas as `ported`, `snapshot-only`, `blocked-by-input-model`, or
-  `needs-domain-check`.
-- Add a migration checklist table under `docs/analysis/` so future work can update status
-  without rereading the workbook.
-
-Acceptance criteria:
-
-- Every user-facing Output and Report table has a documented source range.
-- Every currently Python-ported table links to the worksheet range it replaces.
-- The checklist identifies the next unported formula block and its dependencies.
-
-### Phase 2: Complete Scenario Input Model
-
-Goal: replace remaining implicit workbook selections with typed Python scenario fields.
-
-Tasks:
-
-- Expand `Scenario` to cover all input switches used by migrated modules: battery
-  manufactured/collected, chemistry, location, feedstock mix, recycling process,
-  cathode production settings, recycled content, transport distances, and plant
-  throughput.
-- Add validation for option compatibility, for example process-specific product outputs
-  and chemistry-specific cathode precursor requirements.
-- Replace direct reads of selected workbook cells in Python-calculated paths with values
-  from `Scenario` where the user is expected to edit them.
-- Keep workbook default scenario construction as the reference baseline.
-
-Acceptance criteria:
-
-- The default `Scenario` reproduces workbook default outputs.
-- Changing a Streamlit sidebar input changes the corresponding Python-calculated module.
-- Snapshot-only tables are clearly marked in the UI until they become dynamic.
-
-### Phase 3: Finish Manufacturing Formula Port
-
-Goal: make `Man Par.`, `Man Rec Par.`, and the manufacturing part of `Output` dynamic.
-
-Tasks:
-
-- Replace virgin cell mass, material input, energy, yield, cost, and environmental summary
-  calculations with Python formulas rather than cached worksheet totals.
-- Port virgin pack configuration: cells per module, modules per pack, module/pack mass,
-  component cost, BMS, capital, building, profit, warranty, and total pack cost.
-- Port recycled cell manufacturing for Pyro, Hydro, Direct, and Custom routes, including
-  recycled cathode material inputs, material cost, environmental burdens, and selected
-  recycled content.
-- Extend `python_ported_manufacturing_output_summary()` from virgin cell/pack C/H columns
-  to recycled manufacturing columns D:G.
-- Add tests for each route using workbook default values and synthetic recycled-content
-  scenarios.
-
-Acceptance criteria:
-
-- `Output!C11:H32` is Python-calculated for all manufacturing columns.
-- Max absolute delta versus workbook default is within floating-point tolerance.
-- Streamlit shows which manufacturing columns are Python-calculated and which, if any,
-  remain snapshots.
-
-### Phase 4: Complete Recycling And Material Conversion Dynamics
-
-Goal: make preprocessing, CM recovery, and material conversion respond correctly to
-feedstock and process choices.
-
-Tasks:
-
-- Audit `Preproc. Par.` generic and chemistry-specific branches for feedstock splits,
-  black mass composition, equipment sizing, CAPEX, OPEX, and environmental totals.
-- Complete `CM Rec Par.` Pyro, Hydro, and Direct formulas beyond the current default
-  summaries: reagent consumption, product purity, product mass, equipment scaling,
-  working capital, and revenue/cost allocation.
-- Port Custom route formulas if the workbook exposes enough consistent logic; otherwise
-  document it as user-specified/custom-input driven.
-- Finish `Mat. Conv Par.` route-dependent precursor availability, conversion burden,
-  allocation, and cost formulas.
-- Add scenario tests for at least one Pyro, one Hydro, and one Direct case.
-
-Acceptance criteria:
-
-- `Output` recycle-stage rows for Pyro/Hydro/Direct are Python-calculated.
-- CM recovery product and cost summaries change when feedstock chemistry or throughput
-  changes.
-- Material conversion totals are traceable back to recovered product inputs.
-
-### Phase 5: Complete Cathode Production Port
-
-Goal: fully reproduce `Cath. Prod. Par.` for virgin and recycled cathode production.
-
-Tasks:
-
-- Replace remaining cathode CAPEX/OPEX snapshots with formula-based equipment, capital,
-  labor, utility, material, profit, and warranty calculations.
-- Port required precursor recipes for all supported chemistries and process routes.
-- Make recycled/virgin precursor split dynamic for selected recycled content and available
-  recovered material.
-- Recalculate cathode production cost and environmental totals for Pyro, Hydro, Direct,
-  Custom, Virgin, and Direct regeneration paths.
-- Add tests for NMC(111), NMC(622), NMC(811), LCO, NCA, LMO, and LFP where workbook data
-  is available.
-
-Acceptance criteria:
-
-- Cathode production `Output` columns match workbook default snapshots.
-- Chemistry changes in Streamlit recalculate precursor needs, cost, and environmental
-  totals.
-- Insufficient recovered material is surfaced as virgin makeup or surplus, not hidden.
-
-### Phase 6: Replace Final Output And Report Aggregation
-
-Goal: make `Output` and `Report` calculated from Python module outputs instead of cached
-workbook cells.
-
-Tasks:
-
-- Build a Python aggregation layer that maps module outputs to:
-  cell/pack manufacturing summaries, process-stage summaries, cost breakdowns, recycling
-  revenue tables, manufacturing comparison, and closed-loop total results.
-- Preserve workbook labels and units in the returned tables for easy side-by-side review.
-- Add delta columns against snapshot tables during migration; hide or move them to an
-  audit view once the port is stable.
-- Handle workbook error values such as `#N/A` and `#DIV/0!` explicitly instead of
-  silently converting them when the Python model should report an invalid scenario.
-
-Acceptance criteria:
-
-- User-facing `Output` and `Report` views are Python-calculated by default.
-- Workbook snapshots remain available in an audit expander.
-- End-to-end default scenario deltas are tested at key rows for cost, energy, water, and
-  GHGs.
-
-### Phase 7: Streamlit Productization
-
-Goal: make the app usable as an analysis tool, not just a migration dashboard.
-
-Tasks:
-
-- Separate views into clear workflows: Overview, Recycling, Cathode/Manufacturing,
-  Parameters, and Export.
-- Add user controls for scenario save/load as JSON.
-- Add CSV export for every calculated table and a one-click export for the full scenario
-  result package.
-- Keep formula-migration and audit metadata out of the main user flow; preserve it only in
-  tests, docs, and developer-facing analysis files.
-- Add input validation messages for incompatible scenarios and missing workbook data.
-- Keep dense engineering tables available, but add concise summary cards for cost,
-  energy, water, and GHGs.
-
-Acceptance criteria:
-
-- A user can change a scenario, run the calculation, inspect module results, and export
-  outputs without opening Excel.
-- Snapshot-only values are not presented as editable recalculated outputs.
-- The app remains responsive on the default workbook.
-
-### Phase 8: Quality, Packaging, And Maintenance
-
-Goal: make the project reliable enough to maintain after the initial replica is complete.
-
-Tasks:
-
-- Add focused unit tests per module plus end-to-end regression tests for default scenario.
-- Add a small set of non-default fixture scenarios covering chemistry, feedstock, and
-  process variation.
-- Add type hints and lightweight data validation for module table schemas.
-- Add CI commands for `pytest`, `compileall`, and formatting/linting if a formatter is
-  adopted.
-- Document known deviations from EverBatt, especially places where Excel behavior is
-  ambiguous, error-prone, or intentionally improved.
-
-Acceptance criteria:
-
-- New formula ports require matching tests before being considered complete.
-- Known deviations are documented in one place.
-- The app can be recreated from a clean checkout with `uv sync` and run with Streamlit.
-
-### Current Priority Queue
-
-Completed in the current migration pass:
-
-- `Man Rec Par.!AH70:AK89` recycled manufacturing total environment summaries
-  are now formula-ported from calculated material burdens plus calculated energy
-  inputs, with workbook-delta audit columns and Streamlit display.
-- `python_ported_manufacturing_output_summary()` now uses the Python-calculated
-  recycled manufacturing total columns instead of the cached workbook snapshot.
-- `Output!B37:G59` now has a Python-port audit slice for Collection & Transport
-  and Disassembly, including cost, revenue, and environmental rows with workbook
-  deltas.
-- `Output!I37:M59` Recycle-stage cost, environmental, and revenue rows are now
-  formula-ported for Pyro, Hydro, Direct, and Custom using preprocessing/CM
-  recovery throughput weighting and workbook-delta audit columns.
-- `Output!O37:T58` Cathode Production cost and environmental rows are now
-  formula-ported from `Cath. Prod. Par.!D9` HLOOKUPs into `Man Rec Par.` and
-  `GREET IO`, including the workbook default `Select Chemistry -> #N/A -> 0`
-  behavior.
-- `Cath. Prod. Par.` recycled/virgin/surplus precursor split now has a
-  formula-level audit table that reproduces workbook error propagation at the
-  default zero cathode throughput.
-- `Cath. Prod. Par.` raw-material OPEX row 488 now has a Python-calculated audit
-  table for Pyro, Hydro, Custom, and Virgin annual/per-kg costs.
-- `Cath. Prod. Par.` utilities and labor OPEX rows now have Python-calculated
-  audit tables for annual utility cost, operating labor, and supervisory/clerical
-  labor against workbook rows 494, 490, and 492.
-- `Cath. Prod. Par.` capital, maintenance, fixed-charge, overhead, general
-  expense, profit, total product cost, and cost-to-recipient rows now have
-  Python-calculated audit tables. Circular workbook relationships are solved
-  algebraically for contingency, working capital, patents, distribution, and
-  R&D cost rates.
-- The Cathode CAPEX/OPEX audit tables now roll up into
-  `cathode_cost_per_line_summary_calculated()`, a formula-calculated replacement
-  for the workbook cost-per-line summary.
-- `Output!Q202:V209` Cathode production cost rows now have a Python-calculated
-  audit slice via `python_ported_output_cost_breakdown()`.
-- `Output!P37:T58` Cathode Production process-stage rows now use scenario-derived
-  cathode chemistry, recycled/virgin precursor availability, raw-material costs,
-  and cathode environmental tables instead of the workbook's default
-  `Select Chemistry -> #N/A -> 0` cached outputs. Direct regeneration now uses
-  `cathode_direct_regeneration_environment_summary()` to reproduce the workbook
-  Direct environmental array formulas from `Mat. Conv Par.` and `GREET IO`, plus
-  the scenario-derived Direct cathode raw-material cost path instead of the
-  workbook `#NAME?` cached cost.
-- `Output!B202:H209` Battery production cost rows are now formula-ported from
-  the manufacturing cost summaries, including virgin and recycled material
-  route columns.
-- `Output!J202:O210` Recycling cost rows are now formula-ported for Pyro,
-  Hydro, Direct, and Custom. The port preserves preprocessing/CM recovery
-  throughput weighting, annualized capital cost column offsets, feedstock payment
-  negative-value clipping, and default workbook error propagation to zero.
-- `Output!L216:S227` Recycling revenue rows now have a Python-calculated audit
-  table via `python_ported_output_recycling_revenue_table()`. The audit now
-  uses `cm_recovery_revenue_output_table()` to calculate product revenues from
-  CM recovery product slots, quantities, and price lookups instead of reading
-  cached `CM Rec Par.` revenue rows.
-- CM recovery product and revenue calculations are now fully scenario-derived
-  for Pyro, Hydro, Direct, and Custom. Product yields are calculated from the
-  current black-mass composition and recovery formulas instead of returning the
-  workbook's selected output slots first. The same scenario-derived product map
-  now feeds recycling revenue, material-conversion precursor availability,
-  cathode recycled/virgin precursor splits, and user-facing export tables.
-- `Report!AA20:AE27` and `Report!AA39:AE45` now have Python-calculated report
-  tables via `python_ported_report_manufacturing_comparison()`,
-  `python_ported_report_closed_loop_total_results()`, and
-  `python_ported_report_comparison()`. The Streamlit overview and ZIP export use
-  the calculated report table, while workbook snapshot readers remain available
-  for regression/audit tests.
-- Scenario-level end-to-end fixtures now cover an `NMC(622)` pack feedstock
-  recycling case for Pyro, Hydro, and Direct through
-  `python_ported_stage_summary()`, including preprocessing throughput/cost,
-  CM recovery throughput/cost, material conversion, cathode production, cell
-  manufacturing, and pack manufacturing outputs.
-- The Streamlit Dashboard now has a workflow status layer with explicit
-  calculation badges (`PYTHON PORT`, `MIXED`, and `WORKBOOK SNAPSHOT`) plus
-  workflow tabs for scenario flow, Output audit tables, and saved workbook
-  snapshots. The status metadata is centralized in `src/recycle_cost/ui_status.py`.
-- The Streamlit interface has been refactored into a user-facing tool with
-  Chinese/English language switching, workflow tabs for overview, recycling
-  process, cathode/manufacturing, parameters, and CSV export. Migration and audit
-  details are hidden from the main app experience.
-- The user workflow now includes scenario presets, non-negative/range-constrained
-  numeric inputs, scenario guidance messages, a current-scenario summary table, CSV
-  result exports, and JSON export for the active scenario.
-- Scenario files exported from the app can now be uploaded back into the sidebar to
-  restore inputs, and the export page offers a one-click ZIP package for the scenario
-  plus result CSVs.
-- The Parameters page now presents structured current-model parameter tables for
-  scenario inputs, feedstock streams, transport distances, preprocessing yields,
-  black-mass composition, CM recovery product yields/prices, cathode precursor
-  requirements, chemical prices, utility prices, and conversion costs. The previous
-  raw workbook row/column preview has been removed from the user-facing interface.
-- Collection and transport environmental calculations now use scenario-derived
-  transport segment distances rather than reading the workbook route-distance rows
-  during Python-calculated runs. Default workbook round-trip distance splits are still
-  preserved for regression matching.
-
-Next priorities:
-
-1. Continue replacing remaining workbook snapshot readers in auxiliary audit views
-   with formula-derived functions where they are still user-facing or feed exports.
+- Workbook snapshots remain the regression oracle, not the user-facing calculation path.
+- Formula ports need tests against workbook defaults plus at least one scenario-sensitive
+  test when user inputs should affect the result.
+- Known deviations from workbook behavior should be documented in
+  `docs/analysis/migration_checklist.md`.
 
 ## Tests
 
 ```bash
-pytest -q
+UV_CACHE_DIR=/tmp/uv-cache uv run pytest -q
 ```

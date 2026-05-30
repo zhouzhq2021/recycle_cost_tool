@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 from openpyxl.worksheet.worksheet import Worksheet
@@ -47,6 +48,98 @@ def workbook_range_text_values(sheet: str, cells: str) -> tuple[str, ...]:
             if cell.value is not None:
                 values.append(str(cell.value))
     return tuple(values)
+
+
+@dataclass(frozen=True)
+class WorkbookFeedstockParameter:
+    chemistry: str
+    feedstock_type: str
+    tonnes_per_year: float
+
+
+@dataclass(frozen=True)
+class WorkbookTransportDistanceParameters:
+    collection_to_disassembly: float
+    disassembly_to_preprocessor: float
+    preprocessor_to_cm_recovery: float
+    manufacturer_to_preprocessor_or_cm_recovery: float
+    recycler_to_cathode_producer: float
+    cathode_producer_to_manufacturer: float
+
+
+@dataclass(frozen=True)
+class WorkbookScenarioParameters:
+    battery_manufactured: str
+    throughput_gwh_per_year: float
+    manufacturing_chemistry: str
+    manufacturing_location: str
+    battery_collected: str
+    feedstock_chemistry: str
+    feedstock_type: str
+    feedstock_tonnes_per_year: float
+    recycling_process: str
+    cathode_chemistry: str
+    recycled_content: float
+    cathode_throughput_gwh_per_year: float
+    transport_distances: WorkbookTransportDistanceParameters
+    feedstocks: tuple[WorkbookFeedstockParameter, ...]
+
+
+@dataclass(frozen=True)
+class WorkbookScenarioOptionParameters:
+    battery_manufactured: tuple[str, ...]
+    battery_collected: tuple[str, ...]
+    chemistries: tuple[str, ...]
+    cathode_chemistries: tuple[str, ...]
+    locations: tuple[str, ...]
+    recycling_processes: tuple[str, ...]
+    feedstock_types: tuple[str, ...]
+
+
+def get_workbook_scenario_options() -> WorkbookScenarioOptionParameters:
+    return WorkbookScenarioOptionParameters(
+        battery_manufactured=workbook_range_text_values("Input", "AG23:AG25"),
+        battery_collected=workbook_range_text_values("Input", "AH23:AH25"),
+        chemistries=workbook_range_text_values("Input", "AC4:AC12"),
+        cathode_chemistries=workbook_range_text_values("Input", "AF23:AF29"),
+        locations=workbook_range_text_values("Input", "AD34:AD39"),
+        recycling_processes=workbook_range_text_values("Input", "AC34:AC38"),
+        feedstock_types=workbook_range_text_values("Input", "AG34:AG40"),
+    )
+
+
+def get_workbook_default_scenario_parameters() -> WorkbookScenarioParameters:
+    feedstocks = []
+    for row in range(28, 33):
+        chemistry = workbook_text("Input", f"C{row}")
+        feedstock_type = workbook_text("Input", f"D{row}")
+        tonnes = workbook_number("Input", f"F{row}")
+        if chemistry != "Select Chemistry" or feedstock_type != "Select Type" or tonnes:
+            feedstocks.append(WorkbookFeedstockParameter(chemistry, feedstock_type, tonnes))
+
+    return WorkbookScenarioParameters(
+        battery_manufactured=workbook_text("Input", "E6"),
+        throughput_gwh_per_year=workbook_number("Input", "E8"),
+        manufacturing_chemistry=workbook_text("Input", "E9"),
+        manufacturing_location=workbook_text("Input", "E10"),
+        battery_collected=workbook_text("Input", "E15"),
+        feedstock_chemistry=workbook_text("Input", "C28"),
+        feedstock_type=workbook_text("Input", "D28"),
+        feedstock_tonnes_per_year=workbook_number("Input", "F28"),
+        recycling_process=workbook_text("Output", "J61"),
+        cathode_chemistry=workbook_text("Input", "E46"),
+        recycled_content=workbook_number("Input", "E49"),
+        cathode_throughput_gwh_per_year=workbook_number("Input", "E48"),
+        transport_distances=WorkbookTransportDistanceParameters(
+            collection_to_disassembly=workbook_number("Input", "E17"),
+            disassembly_to_preprocessor=workbook_number("Input", "E18"),
+            preprocessor_to_cm_recovery=workbook_number("Input", "E19"),
+            manufacturer_to_preprocessor_or_cm_recovery=workbook_number("Input", "E20"),
+            recycler_to_cathode_producer=workbook_number("Input", "E21"),
+            cathode_producer_to_manufacturer=workbook_number("Input", "E22"),
+        ),
+        feedstocks=tuple(feedstocks),
+    )
 
 
 def regional_cost_factor(location: str, default: float = 1.0) -> float:

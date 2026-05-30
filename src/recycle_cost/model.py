@@ -7,7 +7,7 @@ from typing import Any
 
 import pandas as pd
 
-from .parameters import workbook_number, workbook_range_text_values, workbook_sheet, workbook_text
+from .parameters import get_workbook_default_scenario_parameters, get_workbook_scenario_options, workbook_number, workbook_sheet
 from .workbook import ANALYSIS_PATH, worksheet_to_frame
 
 
@@ -62,6 +62,7 @@ class ScenarioOptions:
 
 SCENARIO_PRESETS = {
     "default": {
+        "label_key": "preset_default",
         "battery_manufactured": "Pack",
         "throughput": 50.0,
         "manufacturing_chemistry": "NMC(622)",
@@ -76,6 +77,7 @@ SCENARIO_PRESETS = {
         "recycled_content": 0.0,
     },
     "pack_pyro": {
+        "label_key": "preset_pack_pyro",
         "battery_manufactured": "Pack",
         "throughput": 50.0,
         "manufacturing_chemistry": "NMC(622)",
@@ -90,6 +92,7 @@ SCENARIO_PRESETS = {
         "recycled_content": 0.2,
     },
     "pack_hydro": {
+        "label_key": "preset_pack_hydro",
         "battery_manufactured": "Pack",
         "throughput": 50.0,
         "manufacturing_chemistry": "NMC(622)",
@@ -104,6 +107,7 @@ SCENARIO_PRESETS = {
         "recycled_content": 0.2,
     },
     "pack_direct": {
+        "label_key": "preset_pack_direct",
         "battery_manufactured": "Pack",
         "throughput": 50.0,
         "manufacturing_chemistry": "NMC(622)",
@@ -118,6 +122,7 @@ SCENARIO_PRESETS = {
         "recycled_content": 0.2,
     },
     "scrap_direct": {
+        "label_key": "preset_scrap_direct",
         "battery_manufactured": "Cell",
         "throughput": 50.0,
         "manufacturing_chemistry": "NMC(622)",
@@ -147,53 +152,48 @@ def _clean_number(value: Any) -> float | None:
         return None
 
 
-def _range_values(sheet: str, cells: str) -> tuple[str, ...]:
-    return workbook_range_text_values(sheet, cells)
-
-
 def scenario_options() -> ScenarioOptions:
+    params = get_workbook_scenario_options()
     return ScenarioOptions(
-        battery_manufactured=_range_values("Input", "AG23:AG25"),
-        battery_collected=_range_values("Input", "AH23:AH25"),
-        chemistries=_range_values("Input", "AC4:AC12"),
-        cathode_chemistries=_range_values("Input", "AF23:AF29"),
-        locations=_range_values("Input", "AD34:AD39"),
-        recycling_processes=_range_values("Input", "AC34:AC38"),
-        feedstock_types=_range_values("Input", "AG34:AG40"),
+        battery_manufactured=params.battery_manufactured,
+        battery_collected=params.battery_collected,
+        chemistries=params.chemistries,
+        cathode_chemistries=params.cathode_chemistries,
+        locations=params.locations,
+        recycling_processes=params.recycling_processes,
+        feedstock_types=params.feedstock_types,
     )
 
 
 def default_scenario() -> Scenario:
-    feedstocks = []
-    for row in range(28, 33):
-        chemistry = workbook_text("Input", f"C{row}")
-        feedstock_type = workbook_text("Input", f"D{row}")
-        tonnes = workbook_number("Input", f"F{row}")
-        if chemistry != "Select Chemistry" or feedstock_type != "Select Type" or tonnes:
-            feedstocks.append(FeedstockInput(chemistry, feedstock_type, tonnes))
+    params = get_workbook_default_scenario_parameters()
+    distances = params.transport_distances
 
     return Scenario(
-        battery_manufactured=workbook_text("Input", "E6"),
-        throughput_gwh_per_year=workbook_number("Input", "E8"),
-        manufacturing_chemistry=workbook_text("Input", "E9"),
-        manufacturing_location=workbook_text("Input", "E10"),
-        battery_collected=workbook_text("Input", "E15"),
-        feedstock_chemistry=workbook_text("Input", "C28"),
-        feedstock_type=workbook_text("Input", "D28"),
-        feedstock_tonnes_per_year=workbook_number("Input", "F28"),
-        recycling_process=workbook_text("Output", "J61"),
-        cathode_chemistry=workbook_text("Input", "E46"),
-        recycled_content=workbook_number("Input", "E49"),
-        cathode_throughput_gwh_per_year=workbook_number("Input", "E48"),
+        battery_manufactured=params.battery_manufactured,
+        throughput_gwh_per_year=params.throughput_gwh_per_year,
+        manufacturing_chemistry=params.manufacturing_chemistry,
+        manufacturing_location=params.manufacturing_location,
+        battery_collected=params.battery_collected,
+        feedstock_chemistry=params.feedstock_chemistry,
+        feedstock_type=params.feedstock_type,
+        feedstock_tonnes_per_year=params.feedstock_tonnes_per_year,
+        recycling_process=params.recycling_process,
+        cathode_chemistry=params.cathode_chemistry,
+        recycled_content=params.recycled_content,
+        cathode_throughput_gwh_per_year=params.cathode_throughput_gwh_per_year,
         transport_distances=TransportDistances(
-            collection_to_disassembly=workbook_number("Input", "E17"),
-            disassembly_to_preprocessor=workbook_number("Input", "E18"),
-            preprocessor_to_cm_recovery=workbook_number("Input", "E19"),
-            manufacturer_to_preprocessor_or_cm_recovery=workbook_number("Input", "E20"),
-            recycler_to_cathode_producer=workbook_number("Input", "E21"),
-            cathode_producer_to_manufacturer=workbook_number("Input", "E22"),
+            collection_to_disassembly=distances.collection_to_disassembly,
+            disassembly_to_preprocessor=distances.disassembly_to_preprocessor,
+            preprocessor_to_cm_recovery=distances.preprocessor_to_cm_recovery,
+            manufacturer_to_preprocessor_or_cm_recovery=distances.manufacturer_to_preprocessor_or_cm_recovery,
+            recycler_to_cathode_producer=distances.recycler_to_cathode_producer,
+            cathode_producer_to_manufacturer=distances.cathode_producer_to_manufacturer,
         ),
-        feedstocks=tuple(feedstocks),
+        feedstocks=tuple(
+            FeedstockInput(feedstock.chemistry, feedstock.feedstock_type, feedstock.tonnes_per_year)
+            for feedstock in params.feedstocks
+        ),
     )
 
 
