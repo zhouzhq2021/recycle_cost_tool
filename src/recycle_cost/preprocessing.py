@@ -163,10 +163,24 @@ PREPROCESSING_ENVIRONMENT_ROWS = (
     ("OC", 0.0, 0.00688568362296401, 0.0),
     ("CH4", 0.0, 0.550640490249799, 0.0),
     ("N2O", 0.0, 0.006305979617982419, 0.0),
-    ("CO2", 151.8741932781846, 213.5823513019894, 0.0),
-    ("CO2 w/ C in VOC & CO", 151.8741932781846, 214.16616290500264, 0.0),
-    ("GHGs", 151.8741932781846, 232.29678195015583, 0.0),
+    ("CO2", 0.0, 213.5823513019894, 151.8741932781846),
+    ("CO2 w/ C in VOC & CO", 0.0, 214.16616290500264, 151.8741932781846),
+    ("GHGs", 0.0, 232.29678195015583, 151.8741932781846),
 )
+
+PREPROCESSING_PROCESS_GHG_DEFAULT = 151.8741932781846
+
+PREPROCESSING_PROCESS_GHG_BY_FEEDSTOCK = {
+    ("End-of-life battery: pack", "NMC(622)"): 151.8741932781846,
+    ("End-of-life battery: pack", "NMC(811)"): 150.919855291703,
+    ("End-of-life battery: pack", "NCA"): 150.680977130602,
+    ("End-of-life battery: pack", "LFP"): 171.030948684609,
+    ("End-of-life battery: module", "NMC(622)"): 217.211386393312,
+    ("End-of-life battery: cell", "NMC(622)"): 201.578708682847,
+    ("Manufacturing scrap: rejected cells", "NMC(622)"): 201.578708682847,
+    ("Manufacturing scrap: electrode", "NMC(622)"): 21.4238628849058,
+    ("Manufacturing scrap: electrode", "NMC(811)"): 21.54647667217837,
+}
 
 
 def cm_recovery_black_mass_value(scenario: Scenario) -> float:
@@ -569,19 +583,39 @@ def preprocessing_black_mass_composition(scenario: Scenario) -> pd.DataFrame:
 
 def preprocessing_environment_summary(scenario: Scenario) -> pd.DataFrame:
     throughput = preprocessing_throughput(scenario)
+    process_ghg = preprocessing_process_ghg_value(scenario) if throughput > 0 else 0.0
     rows = []
     for metric, material, energy, process in PREPROCESSING_ENVIRONMENT_ROWS:
         material_input = material if throughput > 0 else 0.0
+        process_value = process
+        if metric in {"CO2", "CO2 w/ C in VOC & CO", "GHGs"}:
+            process_value = process_ghg
         rows.append(
             {
                 CommonColumns.METRIC: metric,
                 "material_input": material_input,
                 "energy_input": energy,
-                "process": process,
-                ManufacturingColumns.TOTAL: material_input + energy + process,
+                "process": process_value,
+                ManufacturingColumns.TOTAL: material_input + energy + process_value,
             }
         )
     return pd.DataFrame(rows)
+
+
+def preprocessing_process_ghg_value(scenario: Scenario) -> float:
+    streams = preprocessing_feedstock_streams(scenario)
+    if streams.empty:
+        return 0.0
+    weighted = 0.0
+    for stream in streams.to_dict("records"):
+        feedstock_type = str(stream["feedstock_type"])
+        chemistry = str(stream[CommonColumns.CHEMISTRY])
+        value = PREPROCESSING_PROCESS_GHG_BY_FEEDSTOCK.get(
+            (feedstock_type, chemistry),
+            PREPROCESSING_PROCESS_GHG_DEFAULT,
+        )
+        weighted += float(stream["share"]) * value
+    return weighted
 
 
 def preprocessing_cost_summary(scenario: Scenario) -> pd.DataFrame:

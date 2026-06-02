@@ -178,6 +178,23 @@ def test_default_scenario_has_no_preprocessing_flow():
     assert env.loc["GHGs", "total"] == pytest.approx(232.29678195015583)
 
 
+def test_manufacturing_scrap_electrode_uses_scrap_preprocessing_process_ghg():
+    base = default_scenario()
+    scenario = Scenario(
+        **{
+            **base.__dict__,
+            "feedstock_chemistry": "NMC(622)",
+            "feedstock_type": "Manufacturing scrap: electrode",
+            "feedstock_tonnes_per_year": 5000,
+            "feedstocks": (FeedstockInput("NMC(622)", "Manufacturing scrap: electrode", 5000),),
+        }
+    )
+    env = preprocessing_environment_summary(scenario).set_index("metric")
+
+    assert env.loc["GHGs", "process"] == pytest.approx(21.4238628849058)
+    assert env.loc["GHGs", "total"] == pytest.approx(253.72064483506165)
+
+
 def test_nmc622_pack_feedstock_drives_generic_preprocessing_formulas():
     base = default_scenario()
     scenario = Scenario(

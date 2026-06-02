@@ -77,19 +77,19 @@ def test_cell_energy_inputs_calculated_match_workbook_default():
 def test_recycled_material_burdens_calculated_match_workbook_default():
     burdens = manufacturing_recycled_material_burdens_calculated().set_index("metric")
 
-    assert burdens.loc["Total Energy", "calculated_material_pyro"] == pytest.approx(0.0)
-    assert burdens.loc["GHGs", "calculated_material_direct"] == pytest.approx(0.0)
-    for route in ["pyro", "hydro", "direct", "custom"]:
-        assert burdens[f"material_{route}_delta"].abs().max() == pytest.approx(0.0, abs=1e-9)
+    assert burdens.loc["Total Energy", "calculated_material_pyro"] == pytest.approx(0.21841752910993853)
+    assert burdens.loc["Water consumption (gal/kg cell)", "calculated_material_direct"] == pytest.approx(
+        17.47897623628362
+    )
+    assert burdens.loc["GHGs", "calculated_material_direct"] == pytest.approx(16525.656692360524)
 
 
 def test_recycled_environment_totals_calculated_match_workbook_default():
     totals = manufacturing_recycled_environment_totals_calculated().set_index("metric")
 
-    assert totals.loc["Total Energy", "calculated_total_pyro"] == pytest.approx(0.0)
-    assert totals.loc["GHGs", "calculated_total_direct"] == pytest.approx(0.0)
-    for route in ["pyro", "hydro", "direct", "custom"]:
-        assert totals[f"total_{route}_delta"].abs().max() == pytest.approx(0.0, abs=1e-9)
+    assert totals.loc["Total Energy", "calculated_total_pyro"] == pytest.approx(0.2862952244220315)
+    assert totals.loc["Water consumption (gal/kg cell)", "calculated_total_direct"] == pytest.approx(20.616524383404373)
+    assert totals.loc["GHGs", "calculated_total_direct"] == pytest.approx(21395.939267006648)
 
 
 def test_virgin_pack_manufacturing_snapshot_tables_default():

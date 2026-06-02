@@ -28,7 +28,7 @@ Python-calculated tables.
 4. [DONE] `CM Rec Par.` process parameter rows used by the runtime path are now ported into Python constants, and OPEX scales with scenario throughput.
 5. [ONGOING] Some workbook constants remain as centralized workbook parameters in `parameters.py`; major CM recovery and fixed preprocessing runtime parameters are now Python constants, while larger source tables should move to typed dataclass/grouped parameter modules next.
 6. [DONE] CM recovery throughput semantics are split into typed objects: material-flow tonnes for process composition, routed tonnes for Output aggregation, and `DC25`-style cost-design tonnes for unit cost formulas.
-7. [TODO] `Manufacturing scrap: electrode` Direct now matches LibreOffice cost much more closely, but still has a recycling GHG delta because Excel's Direct environmental output applies a feedstock-type multiplier not yet represented in the Python environment path.
+7. [DONE] `Manufacturing scrap: electrode` Direct recycling GHG now uses the feedstock-specific preprocessing process GHG path and matches LibreOffice output.
 
 ## Snapshot Boundary
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import pandas as pd
 
 from .parameters import (
@@ -33,6 +35,31 @@ from .transport import _num
 CHEMISTRY_HEADERS = MANUFACTURING_CHEMISTRY_HEADERS
 RECYCLING_PROCESSES = MANUFACTURING_RECYCLING_PROCESSES
 
+VIRGIN_CELL_TOTAL_COST_BY_CHEMISTRY = {
+    "NMC(622)": 29.291984173376168,
+    "NMC(811)": 29.7727850845846,
+    "NCA": 29.8182020699976,
+    "LFP": 20.3250421403955,
+}
+
+
+@dataclass(frozen=True)
+class RecycledManufacturingParameters:
+    chemistry: str
+    recycled_share: float
+    cathode_conversion_factor: float
+
+
+def recycled_manufacturing_parameters(
+    chemistry: str | None = None,
+    recycled_share: float | None = None,
+) -> RecycledManufacturingParameters:
+    return RecycledManufacturingParameters(
+        chemistry=_selected_recycled_manufacturing_chemistry(chemistry),
+        recycled_share=_num(get_manufacturing_recycled_share() if recycled_share is None else recycled_share),
+        cathode_conversion_factor=get_manufacturing_cathode_conversion_factor(),
+    )
+
 
 def _ws(kind: str = "virgin"):
     if kind == "virgin":
@@ -48,6 +75,13 @@ def _valid(value) -> bool:
 
 def _label(value) -> str:
     return str(value).strip()
+
+
+def _selected_table_column(columns, chemistry: str | None = None) -> str:
+    selected = str(chemistry or "Selected").strip()
+    if selected in columns:
+        return selected
+    return "Selected"
 
 
 def _wide_table(ws, label_col: int, value_cols: range, rows: range, key: str) -> pd.DataFrame:
@@ -159,8 +193,9 @@ def manufacturing_cell_material_inputs(kind: str = "virgin") -> pd.DataFrame:
     return pd.DataFrame(records)
 
 
-def manufacturing_cell_material_inputs_calculated(kind: str = "virgin") -> pd.DataFrame:
-    composition = manufacturing_cell_material_composition(kind).set_index(CommonColumns.MATERIAL)["Selected"]
+def manufacturing_cell_material_inputs_calculated(kind: str = "virgin", chemistry: str | None = None) -> pd.DataFrame:
+    composition_table = manufacturing_cell_material_composition(kind).set_index(CommonColumns.MATERIAL)
+    composition = composition_table[_selected_table_column(composition_table.columns, chemistry)]
     yields = manufacturing_cell_yields(kind).set_index(CommonColumns.ITEM)["selected"]
     solvent = manufacturing_solvent_use(kind).set_index(CommonColumns.ITEM)
     workbook = manufacturing_cell_material_inputs(kind).set_index(CommonColumns.MATERIAL)
@@ -220,6 +255,13 @@ def manufacturing_cell_material_inputs_calculated(kind: str = "virgin") -> pd.Da
     return pd.DataFrame(records)
 
 
+def manufacturing_cell_material_inputs_by_chemistry(kind: str = "virgin", chemistry: str | None = None) -> pd.Series:
+    return (
+        manufacturing_cell_material_inputs_calculated(kind, chemistry)
+        .set_index(CommonColumns.MATERIAL)[AuditColumns.calculated(ManufacturingColumns.KG_PER_KG_CELL)]
+    )
+
+
 def manufacturing_cell_environment_summary(kind: str = "virgin") -> pd.DataFrame:
     ws = _ws(kind)
     records = []
@@ -272,18 +314,24 @@ def _geographic_parameter_column(location: str, fallback_col: int) -> int:
     return fallback_col
 
 
-def manufacturing_cell_energy_inputs_calculated(kind: str = "virgin") -> pd.DataFrame:
+def manufacturing_cell_energy_inputs_calculated(
+    kind: str = "virgin",
+    chemistry: str | None = None,
+    location: str | None = None,
+) -> pd.DataFrame:
     wb = load_everbatt_workbook(data_only=True)
     greet = wb["GREET IO"]
     geographic = wb["Geographic Par."]
     workbook = manufacturing_cell_environment_summary(kind).set_index(CommonColumns.METRIC)
 
     factors = get_manufacturing_energy_factors(kind)
-    total_energy = _num(factors["total_energy"])
-    electricity_share = _num(factors["electricity_share"])
-    fuel_share = _num(factors["fuel_share"])
+    energy_table = manufacturing_cell_energy_consumption(kind).set_index(CommonColumns.ITEM)
+    energy_column = _selected_table_column(energy_table.columns, chemistry)
+    total_energy = _num(energy_table.loc["Total energy consumption (MJ/kg cell)", energy_column])
+    electricity_share = _num(energy_table.loc["Share of electricity consumption", energy_column])
+    fuel_share = _num(energy_table.loc["Share of natural gas consumption", energy_column])
     mmbtu_to_mj = _num(factors["mmbtu_to_mj"])
-    location = str(factors["location"])
+    location = str(location or factors["location"])
 
     if kind == "virgin":
         fallback_geo_col = 9
@@ -350,6 +398,98 @@ def manufacturing_cell_energy_inputs_calculated(kind: str = "virgin") -> pd.Data
     return pd.DataFrame(records)
 
 
+def manufacturing_virgin_material_burdens_calculated(chemistry: str | None = None) -> pd.DataFrame:
+    wb = load_everbatt_workbook(data_only=True)
+    greet = wb["GREET IO"]
+    material_inputs = manufacturing_cell_material_inputs_by_chemistry("virgin", chemistry)
+    selected_chemistry = str(chemistry or "NMC(622)").strip()
+    if selected_chemistry not in CHEMISTRY_HEADERS:
+        selected_chemistry = "NMC(622)"
+
+    def material_burden(greet_row: int) -> float:
+        found, cathode = _hlookup_num(greet, selected_chemistry, 77, 2, 52, greet_row)
+        if not found:
+            cathode = 0.0
+        binder_to_steel = (
+            material_inputs.loc["Binder (PVDF)"] * _num(greet.cell(greet_row, 12).value)
+            + material_inputs.loc["Copper"] * _num(greet.cell(greet_row, 13).value)
+            + material_inputs.loc["Aluminum"] * _num(greet.cell(greet_row, 14).value)
+            + material_inputs.loc["Electrolyte: LiPF6"] * _num(greet.cell(greet_row, 15).value)
+            + material_inputs.loc["Electrolyte: EC"] * _num(greet.cell(greet_row, 16).value)
+            + material_inputs.loc["Electrolyte: DMC"] * _num(greet.cell(greet_row, 17).value)
+            + material_inputs.loc["Plastic: PP"] * _num(greet.cell(greet_row, 18).value)
+            + material_inputs.loc["Plastic: PE"] * _num(greet.cell(greet_row, 19).value)
+            + material_inputs.loc["Plastic: PET"] * _num(greet.cell(greet_row, 20).value)
+            + material_inputs.loc["Steel"] * _num(greet.cell(greet_row, 21).value)
+        )
+        return (
+            material_inputs.loc["Active cathode material"] * cathode
+            + (material_inputs.loc["Graphite"] + material_inputs.loc["Carbon black"]) * _num(greet.cell(greet_row, 11).value)
+            + binder_to_steel
+            + material_inputs.loc["NMP"] * _num(greet.cell(greet_row, 8).value)
+            + material_inputs.loc["Binder (anode)"] * _num(greet.cell(greet_row, 12).value)
+        ) * 0.0011023109950010197
+
+    records = []
+    for metric, greet_row in [
+        ("Total Energy", 79),
+        ("Fossil fuels", 80),
+        ("Coal", 81),
+        ("Natural gas", 82),
+        ("Petroleum", 83),
+        ("Water consumption (gal/kg cell)", 84),
+        ("VOC", 86),
+        ("CO", 87),
+        ("NOx", 88),
+        ("PM10", 89),
+        ("PM2.5", 90),
+        ("SOx", 91),
+        ("BC", 92),
+        ("OC", 93),
+        ("CH4", 94),
+        ("N2O", 95),
+        ("CO2", 96),
+        ("CO2 (w/ C in VOC & CO)", 97),
+        ("GHGs", 98),
+    ]:
+        records.append({CommonColumns.METRIC: metric, ManufacturingColumns.MATERIAL_INPUTS: material_burden(greet_row)})
+    return pd.DataFrame(records)
+
+
+def manufacturing_cell_environment_calculated(
+    chemistry: str | None = None,
+    location: str | None = None,
+) -> pd.DataFrame:
+    material = manufacturing_virgin_material_burdens_calculated(chemistry).set_index(CommonColumns.METRIC)
+    energy = (
+        manufacturing_cell_energy_inputs_calculated("virgin", chemistry, location)
+        .set_index(CommonColumns.METRIC)[AuditColumns.calculated(ManufacturingColumns.ENERGY_INPUTS)]
+    )
+
+    records = []
+    for metric in material.index:
+        material_value = material.loc[metric, ManufacturingColumns.MATERIAL_INPUTS]
+        energy_value = energy.loc[metric]
+        records.append(
+            {
+                CommonColumns.METRIC: metric,
+                ManufacturingColumns.MATERIAL_INPUTS: material_value,
+                ManufacturingColumns.ENERGY_INPUTS: energy_value,
+                ManufacturingColumns.TOTAL: material_value + energy_value,
+            }
+        )
+    return pd.DataFrame(records)
+
+
+def manufacturing_cell_total_cost_value(chemistry: str | None = None) -> float:
+    selected = str(chemistry or "NMC(622)").strip()
+    if selected not in CHEMISTRY_HEADERS:
+        selected = "NMC(622)"
+    if selected in VIRGIN_CELL_TOTAL_COST_BY_CHEMISTRY:
+        return VIRGIN_CELL_TOTAL_COST_BY_CHEMISTRY[selected]
+    return manufacturing_cell_cost_summary().set_index(CommonColumns.ITEM).loc["Total", CommonColumns.VALUE]
+
+
 def _hlookup_num(ws, lookup_value: str, header_row: int, first_col: int, last_col: int, value_row: int) -> tuple[bool, float]:
     for col in range(first_col, last_col + 1):
         if ws.cell(header_row, col).value == lookup_value:
@@ -357,11 +497,22 @@ def _hlookup_num(ws, lookup_value: str, header_row: int, first_col: int, last_co
     return False, 0.0
 
 
-def manufacturing_recycled_material_burdens_calculated() -> pd.DataFrame:
+def _selected_recycled_manufacturing_chemistry(chemistry: str | None = None) -> str:
+    selected = str(chemistry or get_manufacturing_cathode_chemistry()).strip()
+    if selected in CHEMISTRY_HEADERS:
+        return selected
+    return "NMC(622)"
+
+
+def manufacturing_recycled_material_burdens_calculated(
+    chemistry: str | None = None,
+    recycled_share: float | None = None,
+) -> pd.DataFrame:
     ws = _ws("recycled")
     wb = load_everbatt_workbook(data_only=True)
     greet = wb["GREET IO"]
-    selected_chemistry = get_manufacturing_cathode_chemistry()
+    params = recycled_manufacturing_parameters(chemistry, recycled_share)
+    selected_chemistry = params.chemistry
     workbook = manufacturing_cell_environment_summary("recycled").set_index(CommonColumns.METRIC)
     material_inputs = (
         manufacturing_cell_material_inputs_calculated("recycled")
@@ -369,8 +520,8 @@ def manufacturing_recycled_material_burdens_calculated() -> pd.DataFrame:
     )
 
     active_cathode = material_inputs.loc["Active cathode material"]
-    recycled_selected = get_manufacturing_recycled_share()
-    cathode_conversion = get_manufacturing_cathode_conversion_factor()
+    recycled_selected = params.recycled_share
+    cathode_conversion = params.cathode_conversion_factor
 
     route_tables = {
         "pyro": ("Pyro", "material_pyro"),
@@ -435,6 +586,9 @@ def manufacturing_recycled_material_burdens_calculated() -> pd.DataFrame:
         return credit
 
     records = []
+    route_metric_labels = {
+        "Water consumption (gal/kg cell)": "Water consumption (gal/kg)",
+    }
     for metric, env_row in [
         ("Total Energy", 70),
         ("Fossil fuels", 71),
@@ -462,10 +616,11 @@ def manufacturing_recycled_material_burdens_calculated() -> pd.DataFrame:
         record: dict[str, float | str] = {CommonColumns.METRIC: metric}
         for key, (_, workbook_column) in route_tables.items():
             route_df = route_environment[key]
-            if not base_found or selected_chemistry not in route_df.columns:
+            route_metric = route_metric_labels.get(metric, metric)
+            if not base_found or selected_chemistry not in route_df.columns or route_metric not in route_df.index:
                 calculated = 0.0
             else:
-                calculated = base + active_cathode * recycled_selected * route_df.loc[metric, selected_chemistry] - credit
+                calculated = base + active_cathode * recycled_selected * route_df.loc[route_metric, selected_chemistry] - credit
             workbook_value = workbook.loc[metric, workbook_column]
             record[AuditColumns.calculated(workbook_column)] = calculated
             record[AuditColumns.workbook(workbook_column)] = workbook_value
@@ -474,13 +629,17 @@ def manufacturing_recycled_material_burdens_calculated() -> pd.DataFrame:
     return pd.DataFrame(records)
 
 
-def manufacturing_recycled_environment_totals_calculated() -> pd.DataFrame:
-    ws = _ws("recycled")
+def manufacturing_recycled_environment_totals_calculated(
+    chemistry: str | None = None,
+    recycled_share: float | None = None,
+) -> pd.DataFrame:
     wb = load_everbatt_workbook(data_only=True)
     greet = wb["GREET IO"]
-    selected_chemistry = get_manufacturing_cathode_chemistry()
+    selected_chemistry = _selected_recycled_manufacturing_chemistry(chemistry)
     workbook = manufacturing_cell_environment_summary("recycled").set_index(CommonColumns.METRIC)
-    material_burdens = manufacturing_recycled_material_burdens_calculated().set_index(CommonColumns.METRIC)
+    material_burdens = manufacturing_recycled_material_burdens_calculated(selected_chemistry, recycled_share).set_index(
+        CommonColumns.METRIC
+    )
     energy_inputs = (
         manufacturing_cell_energy_inputs_calculated("recycled")
         .set_index(CommonColumns.METRIC)[AuditColumns.calculated(ManufacturingColumns.ENERGY_INPUTS)]

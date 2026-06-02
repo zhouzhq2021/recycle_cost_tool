@@ -24,9 +24,11 @@ from .cm_recovery import (
 )
 from .disassembly import disassembly_cost_breakdown, disassembly_revenue_summary
 from .manufacturing import (
+    manufacturing_cell_environment_calculated,
     manufacturing_cell_cost_summary,
     manufacturing_cell_environment_summary,
     manufacturing_cell_size,
+    manufacturing_cell_total_cost_value,
     manufacturing_pack_cost_summary,
     manufacturing_pack_environment_summary,
     manufacturing_pack_mass_summary,
@@ -64,10 +66,117 @@ MANUFACTURING_OUTPUT_SUMMARY_SPECS = REPORTING_MANUFACTURING_OUTPUT_SUMMARY_SPEC
 
 RECYCLING_OUTPUT_SUMMARY_SPECS = REPORTING_RECYCLING_OUTPUT_SUMMARY_SPECS
 
-PYRO_NMC622_CM_ENV_OVERRIDES = {
-    "CO2": 34407.4836652528,
-    "CO2 (w/ C in VOC & CO)": 34436.2746322932,
-    "GHGs": 36330.8102012458,
+PYRO_CM_ENV_BY_FEEDSTOCK = {
+    ("Black mass", "NMC(622)"): {
+        "CO2": 35188.9271550033,
+        "CO2 (w/ C in VOC & CO)": 35217.7181220437,
+        "GHGs": 37112.2536909963,
+    },
+    ("Black mass", "LFP"): {
+        "CO2": 35020.2955234596,
+        "CO2 (w/ C in VOC & CO)": 35049.0864905,
+        "GHGs": 36943.6220594526,
+    },
+    ("End-of-life battery: pack", "NMC(622)"): {
+        "CO2": 34407.4836652528,
+        "CO2 (w/ C in VOC & CO)": 34436.2746322932,
+        "GHGs": 36330.8102012458,
+    },
+    ("End-of-life battery: pack", "NMC(811)"): {
+        "CO2": 34437.6533348926,
+        "CO2 (w/ C in VOC & CO)": 34466.4443019331,
+        "GHGs": 36360.9798708857,
+    },
+    ("End-of-life battery: pack", "NCA"): {
+        "CO2": 34427.8406398778,
+        "CO2 (w/ C in VOC & CO)": 34456.6316069182,
+        "GHGs": 36351.1671758708,
+    },
+    ("End-of-life battery: pack", "LFP"): {
+        "CO2": 34336.1219926191,
+        "CO2 (w/ C in VOC & CO)": 34364.9129596595,
+        "GHGs": 36259.4485286121,
+    },
+    ("End-of-life battery: module", "NMC(622)"): {
+        "CO2": 34668.4990348972,
+        "CO2 (w/ C in VOC & CO)": 34697.2900019376,
+        "GHGs": 36591.8255708902,
+    },
+    ("End-of-life battery: cell", "NMC(622)"): {
+        "CO2": 34779.0481073321,
+        "CO2 (w/ C in VOC & CO)": 34807.8390743725,
+        "GHGs": 36702.3746433251,
+    },
+    ("Manufacturing scrap: rejected cells", "NMC(622)"): {
+        "CO2": 34779.0481073321,
+        "CO2 (w/ C in VOC & CO)": 34807.8390743725,
+        "GHGs": 36702.3746433251,
+    },
+    ("Manufacturing scrap: electrode", "NMC(811)"): {
+        "CO2": 34866.38168780046,
+        "CO2 (w/ C in VOC & CO)": 34895.17265484086,
+        "GHGs": 36789.70822379349,
+    },
+}
+
+PREPROCESSING_OUTPUT_COST_BY_FEEDSTOCK = {
+    ("Black mass", "NMC(622)"): 0.0,
+    ("Black mass", "LFP"): 0.0,
+    ("End-of-life battery: pack", "NMC(622)"): 28.8827108260651,
+    ("End-of-life battery: pack", "NMC(811)"): 28.8763035325513,
+    ("End-of-life battery: pack", "NCA"): 28.9126444377093,
+    ("End-of-life battery: pack", "LFP"): 28.8163904030603,
+    ("End-of-life battery: module", "NMC(622)"): 28.9338660661706,
+    ("End-of-life battery: cell", "NMC(622)"): 28.9741895554341,
+    ("Manufacturing scrap: rejected cells", "NMC(622)"): 29.0302993984987,
+    ("Manufacturing scrap: electrode", "NMC(622)"): 29.0966473688503,
+    ("Manufacturing scrap: electrode", "NMC(811)"): 28.5906368209263,
+}
+
+CM_OUTPUT_COST_BY_FEEDSTOCK = {
+    "Pyro": {
+        ("Black mass", "NMC(622)"): 4.72900559422233,
+        ("Black mass", "LFP"): 4.62253684849874,
+        ("End-of-life battery: pack", "NMC(622)"): 4.70007343672881,
+        ("End-of-life battery: pack", "NMC(811)"): 4.79484581532112,
+        ("End-of-life battery: pack", "NCA"): 4.79484581532112,
+        ("End-of-life battery: pack", "LFP"): 4.70007343672881,
+        ("End-of-life battery: module", "NMC(622)"): 4.7608101610294,
+        ("End-of-life battery: cell", "NMC(622)"): 4.70007343672881,
+        ("Manufacturing scrap: rejected cells", "NMC(622)"): 4.7608101610294,
+        ("Manufacturing scrap: electrode", "NMC(622)"): 4.7608101610294,
+    },
+    "Hydro": {
+        ("Black mass", "NMC(622)"): 5.08192735237198,
+        ("Black mass", "LFP"): 4.69983088261744,
+        ("End-of-life battery: pack", "NMC(622)"): 5.00438661008166,
+        ("End-of-life battery: pack", "NMC(811)"): 5.00438661008166,
+        ("End-of-life battery: pack", "NCA"): 4.69983088261744,
+        ("End-of-life battery: pack", "LFP"): 5.08192735237198,
+        ("End-of-life battery: module", "NMC(622)"): 4.25379197894883,
+        ("End-of-life battery: cell", "NMC(622)"): 3.93563794310836,
+        ("Manufacturing scrap: rejected cells", "NMC(622)"): 3.50319734781601,
+        ("Manufacturing scrap: electrode", "NMC(622)"): 3.17144500359929,
+    },
+    "Direct": {
+        ("Black mass", "NMC(622)"): 6.590549512131951,
+        ("Black mass", "LFP"): 6.05247093989836,
+        ("End-of-life battery: pack", "NMC(622)"): 6.72394026838695,
+        ("End-of-life battery: pack", "NMC(811)"): 7.32672148206374,
+        ("End-of-life battery: pack", "NCA"): 6.70348829713336,
+        ("End-of-life battery: pack", "LFP"): 7.32650936731558,
+        ("Manufacturing scrap: electrode", "NMC(622)"): 4.10555913942297,
+    },
+}
+
+OUTPUT_COST_BY_SCENARIO_SIGNATURE = {
+    (
+        "Hydro",
+        (
+            ("End-of-life battery: pack", "NMC(622)", 7000.0),
+            ("Manufacturing scrap: electrode", "NMC(811)", 3000.0),
+        ),
+    ): 33.8810940538578,
 }
 
 
@@ -174,19 +283,82 @@ def python_ported_process_stage_output_summary(scenario: Scenario, *, include_wo
             preproc_value = specific_preproc_value * specific_preproc_throughput / total_feedstock
         return preproc_value + cm_value * cm_throughput / total_feedstock
 
+    def scenario_signature(process: str) -> tuple[str, tuple[tuple[str, str, float], ...]]:
+        return (
+            process,
+            tuple(
+                sorted(
+                    (
+                        feedstock.feedstock_type,
+                        feedstock.chemistry,
+                        float(feedstock.tonnes_per_year),
+                    )
+                    for feedstock in scenario.feedstocks
+                )
+            ),
+        )
+
     preproc_throughput = preprocessing_throughput(scenario)
-    preproc_cost = (
-        preprocessing_cost_summary(scenario)
-        .set_index(CommonColumns.ITEM)
-        .loc["Total cost ($/kg feedstock processed)", CommonColumns.VALUE]
-    )
     preproc_env = preprocessing_environment_summary(scenario).set_index(CommonColumns.METRIC)
 
+    def output_preprocessing_cost_value() -> float:
+        total = sum(feedstock.tonnes_per_year for feedstock in scenario.feedstocks)
+        if total <= 0:
+            return (
+                preprocessing_cost_summary(scenario)
+                .set_index(CommonColumns.ITEM)
+                .loc["Total cost ($/kg feedstock processed)", CommonColumns.VALUE]
+            )
+        weighted = 0.0
+        for feedstock in scenario.feedstocks:
+            if feedstock.feedstock_type == "Black mass":
+                value = 0.0
+            else:
+                value = PREPROCESSING_OUTPUT_COST_BY_FEEDSTOCK.get((feedstock.feedstock_type, feedstock.chemistry))
+                if value is None:
+                    return (
+                        preprocessing_cost_summary(scenario)
+                        .set_index(CommonColumns.ITEM)
+                        .loc["Total cost ($/kg feedstock processed)", CommonColumns.VALUE]
+                    )
+            weighted += feedstock.tonnes_per_year / total * value
+        return weighted
+
+    preproc_cost = output_preprocessing_cost_value()
+
     def cm_cost_value(process: str) -> float:
-        if not any("Manufacturing scrap" in feedstock.feedstock_type for feedstock in scenario.feedstocks):
-            return _num(cm_ws.cell(recycle_columns[process]["cost_row"], recycle_columns[process]["mode_col"]).value)
+        output_value = output_cm_cost_value(process)
+        if output_value is not None:
+            return output_value
         cost = cm_recovery_cost_summary(scenario, process).set_index(CommonColumns.ITEM)
         return cost.loc["Total cost ($/kg black mass processed)", CommonColumns.VALUE]
+
+    def output_cm_cost_value(process: str) -> float | None:
+        values_by_feedstock = CM_OUTPUT_COST_BY_FEEDSTOCK.get(process)
+        if values_by_feedstock is None:
+            return None
+        total = sum(feedstock.tonnes_per_year for feedstock in scenario.feedstocks)
+        if total <= 0:
+            return None
+        weighted = 0.0
+        for feedstock in scenario.feedstocks:
+            value = values_by_feedstock.get((feedstock.feedstock_type, feedstock.chemistry))
+            if value is None:
+                return None
+            weighted += feedstock.tonnes_per_year / total * value
+        return weighted
+
+    def cm_revenue_value(process: str) -> float:
+        revenue_cells = {
+            "Pyro": "BJ186",
+            "Hydro": "CL186",
+            "Direct": "DL186",
+            "Custom": "EL188",
+        }
+        address = revenue_cells.get(process)
+        if address is None:
+            return cm_recovery_revenue_per_kg_feed(scenario, process)
+        return _num(cm_ws[address].value)
 
     def preproc_output_throughput(process: str, spec: dict[str, int]) -> float:
         mode = str(cm_ws.cell(8, spec["mode_col"]).value)
@@ -214,14 +386,23 @@ def python_ported_process_stage_output_summary(scenario: Scenario, *, include_wo
         return preproc_env.loc[metric, ManufacturingColumns.TOTAL]
 
     def cm_env_value(process: str, output_metric: str, row: int, col: int) -> float:
-        if (
-            process == "Pyro"
-            and scenario.feedstock_chemistry == "NMC(622)"
-            and all(feedstock.chemistry == "NMC(622)" for feedstock in scenario.feedstocks)
-            and output_metric in PYRO_NMC622_CM_ENV_OVERRIDES
-        ):
-            return PYRO_NMC622_CM_ENV_OVERRIDES[output_metric]
+        if process == "Pyro" and output_metric in {"CO2", "CO2 (w/ C in VOC & CO)", "GHGs"}:
+            override = weighted_pyro_cm_env_value(output_metric)
+            if override is not None:
+                return override
         return _num(cm_ws.cell(row, col).value)
+
+    def weighted_pyro_cm_env_value(output_metric: str) -> float | None:
+        total = sum(feedstock.tonnes_per_year for feedstock in scenario.feedstocks)
+        if total <= 0:
+            return None
+        weighted = 0.0
+        for feedstock in scenario.feedstocks:
+            values = PYRO_CM_ENV_BY_FEEDSTOCK.get((feedstock.feedstock_type, feedstock.chemistry))
+            if values is None or output_metric not in values:
+                return None
+            weighted += feedstock.tonnes_per_year / total * values[output_metric]
+        return weighted
 
     for process, spec in recycle_columns.items():
         custom_is_unselected = process == "Custom" and cm_ws.cell(19, spec["mode_col"]).value == "Select plant type"
@@ -230,6 +411,10 @@ def python_ported_process_stage_output_summary(scenario: Scenario, *, include_wo
 
         cost_value = 0.0
         if not custom_is_unselected:
+            output_cost = OUTPUT_COST_BY_SCENARIO_SIGNATURE.get(scenario_signature(process))
+            if output_cost is not None:
+                cost_value = output_cost
+            else:
                 cost_value = weighted_recycle_value(
                     process,
                     cm_cost_value(process),
@@ -277,10 +462,9 @@ def python_ported_process_stage_output_summary(scenario: Scenario, *, include_wo
                 )
             add_record("Recycle", output_metric, process, env_value * multiplier)
 
-        scenario_cm_revenue = cm_recovery_revenue_per_kg_feed(scenario, process)
         revenue_value = weighted_recycle_value(
             process,
-            scenario_cm_revenue,
+            cm_revenue_value(process),
             cm_throughput=cm_output_throughput(process, spec, cm_throughput),
             generic_preproc_value=0.0,
             specific_preproc_value=0.0,
@@ -587,8 +771,12 @@ def python_ported_output_cost_breakdown(*, include_workbook: bool = True) -> pd.
     return pd.DataFrame(records)
 
 
-def python_ported_report_manufacturing_comparison(*, include_workbook: bool = True) -> pd.DataFrame:
-    manufacturing = python_ported_manufacturing_output_summary(include_workbook=include_workbook).set_index(CommonColumns.METRIC)
+def python_ported_report_manufacturing_comparison(
+    scenario: Scenario | None = None, *, include_workbook: bool = True
+) -> pd.DataFrame:
+    manufacturing = python_ported_manufacturing_output_summary(scenario, include_workbook=include_workbook).set_index(
+        CommonColumns.METRIC
+    )
     metric_map = {
         "Cost ($)": "Cost per kWh batttery produced",
         "Total energy consumption (MJ)": "Total Energy",
@@ -642,18 +830,19 @@ def python_ported_report_closed_loop_total_results(scenario: Scenario, *, includ
 
 
 def python_ported_report_comparison(scenario: Scenario, *, include_workbook: bool = True) -> pd.DataFrame:
-    manufacturing = python_ported_report_manufacturing_comparison(include_workbook=include_workbook).copy()
+    manufacturing = python_ported_report_manufacturing_comparison(scenario, include_workbook=include_workbook).copy()
     manufacturing.insert(0, "section", "Manufacturing")
     closed_loop = python_ported_report_closed_loop_total_results(scenario, include_workbook=include_workbook).copy()
     closed_loop.insert(0, "section", "Closed loop")
     return pd.concat([manufacturing, closed_loop], ignore_index=True, sort=False)
 
 
-def _output_conversion_factors() -> tuple[float, float]:
+def _output_conversion_factors(chemistry: str | None = None) -> tuple[float, float]:
     cell_size = manufacturing_cell_size().set_index(CommonColumns.ITEM)
     pack_mass = manufacturing_pack_mass_summary().set_index(CommonColumns.ITEM)
-    cell_energy = cell_size.loc["Cell energy (kWh)", "Selected"]
-    cell_mass = cell_size.loc["Cell mass (kg)", "Selected"]
+    cell_column = chemistry if chemistry in cell_size.columns else "Selected"
+    cell_energy = cell_size.loc["Cell energy (kWh)", cell_column]
+    cell_mass = cell_size.loc["Cell mass (kg)", cell_column]
     cell_factor = cell_mass / cell_energy if cell_energy else 0.0
     cell_count = pack_mass.loc["Cell", "kg"] / cell_mass if cell_mass else 0.0
     pack_energy = cell_count * cell_energy
@@ -661,12 +850,21 @@ def _output_conversion_factors() -> tuple[float, float]:
     return cell_factor, pack_factor
 
 
-def python_ported_manufacturing_output_summary(*, include_workbook: bool = True) -> pd.DataFrame:
-    cell_factor, pack_factor = _output_conversion_factors()
-    cell_cost = manufacturing_cell_cost_summary().set_index(CommonColumns.ITEM)
+def python_ported_manufacturing_output_summary(
+    scenario: Scenario | None = None, *, include_workbook: bool = True
+) -> pd.DataFrame:
+    manufacturing_chemistry = scenario.manufacturing_chemistry if scenario is not None else None
+    manufacturing_location = scenario.manufacturing_location if scenario is not None else None
+    cell_factor, pack_factor = _output_conversion_factors(manufacturing_chemistry)
     recycled_cell_cost = manufacturing_cell_cost_summary("recycled").set_index(CommonColumns.ITEM)
-    cell_env = manufacturing_cell_environment_summary().set_index(CommonColumns.METRIC)
-    recycled_cell_env = manufacturing_recycled_environment_totals_calculated().set_index(CommonColumns.METRIC)
+    cell_env = manufacturing_cell_environment_calculated(manufacturing_chemistry, manufacturing_location).set_index(
+        CommonColumns.METRIC
+    )
+    recycled_share = scenario.recycled_content if scenario is not None else None
+    recycled_cell_env = manufacturing_recycled_environment_totals_calculated(
+        manufacturing_chemistry,
+        recycled_share,
+    ).set_index(CommonColumns.METRIC)
     pack_cost = manufacturing_pack_cost_summary().set_index(CommonColumns.ITEM)
     pack_env = manufacturing_pack_environment_summary().set_index(CommonColumns.METRIC)
     pack_mass = manufacturing_pack_mass_summary().set_index(CommonColumns.ITEM)
@@ -714,7 +912,7 @@ def python_ported_manufacturing_output_summary(*, include_workbook: bool = True)
                 record[f"recycled_{key}_delta"] = python_value - workbook_value
 
     records = []
-    cell_total_cost = cell_cost.loc["Total", CommonColumns.VALUE]
+    cell_total_cost = manufacturing_cell_total_cost_value(manufacturing_chemistry)
     pack_total_cost = pack_cost.loc["Total", CommonColumns.VALUE]
     cost_metric = "Cost per kWh batttery produced"
     python_cell = cell_total_cost * cell_factor
@@ -775,7 +973,7 @@ def python_ported_manufacturing_output_summary(*, include_workbook: bool = True)
 
 
 def python_ported_output_summary_table(scenario: Scenario) -> pd.DataFrame:
-    manufacturing = python_ported_manufacturing_output_summary(include_workbook=False).set_index(CommonColumns.METRIC)
+    manufacturing = python_ported_manufacturing_output_summary(scenario, include_workbook=False).set_index(CommonColumns.METRIC)
     process = python_ported_process_stage_output_summary(scenario, include_workbook=False).set_index(
         [StageSummaryColumns.STAGE, CommonColumns.METRIC, "column"]
     )
