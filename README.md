@@ -395,3 +395,13 @@ recycle-cost is a Python/Streamlit migration of the EverBatt battery recycling c
 ```text
 recycle-cost 是 EverBatt 电池回收成本模型的 Python/Streamlit 迁移版本。它把原本依赖 Excel 的回收经济性、材料价值、正极生产、电芯与电池包制造、能耗、水耗和温室气体排放计算，迁移为可测试、可审计、可批量运行的 Python 工具，同时保留原工作簿作为回归校验基准。
 ```
+
+## 14. License / 版权
+
+本项目代码以 MIT License 发布，详见 [LICENSE](LICENSE)。
+
+```text
+Copyright (c) 2026 zhouzhq2021
+```
+
+本项目是对 EverBatt 2023 工作簿模型的 Python/Streamlit 迁移与复现。原始 EverBatt 模型、工作簿、数据、商标和相关名称的版权归其原始作者或机构所有。本仓库不声称拥有原始 EverBatt 模型的版权；本仓库的版权范围仅覆盖本项目中新编写的 Python 代码、测试、脚本、文档和迁移实现。
