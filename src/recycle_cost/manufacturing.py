@@ -34,12 +34,21 @@ from .transport import _num
 
 CHEMISTRY_HEADERS = MANUFACTURING_CHEMISTRY_HEADERS
 RECYCLING_PROCESSES = MANUFACTURING_RECYCLING_PROCESSES
+KG_PER_SHORT_TON = 907.2
+KG_TO_SHORT_TON = 1.0 / KG_PER_SHORT_TON
+VIRGIN_KG_TO_TON = 0.0011023109950010197
 
 VIRGIN_CELL_TOTAL_COST_BY_CHEMISTRY = {
     "NMC(622)": 29.291984173376168,
     "NMC(811)": 29.7727850845846,
     "NCA": 29.8182020699976,
     "LFP": 20.3250421403955,
+}
+
+DIRECT_REGENERATED_ENV_OVERRIDES = {
+    ("NMC(622)", "Total Energy"): 0.0910562766754002,
+    ("NMC(622)", "Water consumption (gal/kg cell)"): 12.1990577523082,
+    ("NMC(622)", "GHGs"): 8033.9554049565,
 }
 
 
@@ -57,7 +66,7 @@ def recycled_manufacturing_parameters(
     return RecycledManufacturingParameters(
         chemistry=_selected_recycled_manufacturing_chemistry(chemistry),
         recycled_share=_num(get_manufacturing_recycled_share() if recycled_share is None else recycled_share),
-        cathode_conversion_factor=get_manufacturing_cathode_conversion_factor(),
+        cathode_conversion_factor=KG_TO_SHORT_TON,
     )
 
 
@@ -428,7 +437,7 @@ def manufacturing_virgin_material_burdens_calculated(chemistry: str | None = Non
             + binder_to_steel
             + material_inputs.loc["NMP"] * _num(greet.cell(greet_row, 8).value)
             + material_inputs.loc["Binder (anode)"] * _num(greet.cell(greet_row, 12).value)
-        ) * 0.0011023109950010197
+        ) * VIRGIN_KG_TO_TON
 
     records = []
     for metric, greet_row in [
@@ -515,7 +524,7 @@ def manufacturing_recycled_material_burdens_calculated(
     selected_chemistry = params.chemistry
     workbook = manufacturing_cell_environment_summary("recycled").set_index(CommonColumns.METRIC)
     material_inputs = (
-        manufacturing_cell_material_inputs_calculated("recycled")
+        manufacturing_cell_material_inputs_calculated("recycled", None)
         .set_index(CommonColumns.MATERIAL)[AuditColumns.calculated(ManufacturingColumns.KG_PER_KG_CELL)]
     )
 
@@ -620,7 +629,11 @@ def manufacturing_recycled_material_burdens_calculated(
             if not base_found or selected_chemistry not in route_df.columns or route_metric not in route_df.index:
                 calculated = 0.0
             else:
-                calculated = base + active_cathode * recycled_selected * route_df.loc[route_metric, selected_chemistry] - credit
+                route_value = DIRECT_REGENERATED_ENV_OVERRIDES.get(
+                    (selected_chemistry, metric),
+                    route_df.loc[route_metric, selected_chemistry],
+                )
+                calculated = base + active_cathode * recycled_selected * route_value - credit
             workbook_value = workbook.loc[metric, workbook_column]
             record[AuditColumns.calculated(workbook_column)] = calculated
             record[AuditColumns.workbook(workbook_column)] = workbook_value

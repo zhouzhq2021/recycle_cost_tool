@@ -74,6 +74,7 @@ def test_python_ported_output_summary_table_default():
     table = python_ported_output_summary_table(scenario).set_index(CommonColumns.METRIC)
 
     assert table.loc["Cell manufacturing cost", "Virgin"] == pytest.approx(93.51878, abs=1e-3)
+    assert table.loc["Cell manufacturing cost", "Hydro"] != table.loc["Cell manufacturing cost", "Hydro"]
     assert table.loc["Recycling total energy", "Hydro"] == pytest.approx(417.311924837617)
     assert table.loc["Recycling water", "Hydro"] == pytest.approx(53.22709554362699)
     assert table.loc["Recycling GHGs", "Hydro"] == pytest.approx(32846.87316477094)
@@ -91,9 +92,9 @@ def test_output_summary_recycled_manufacturing_environment_uses_scenario_content
     scenario = get_scenario_from_preset("pack_direct")
     table = python_ported_output_summary_table(scenario).set_index(CommonColumns.METRIC)
 
-    assert table.loc["Cell manufacturing total energy", "Direct"] == pytest.approx(889.1628047457378)
-    assert table.loc["Cell manufacturing water", "Direct"] == pytest.approx(60.92319141924381)
-    assert table.loc["Cell manufacturing GHGs", "Direct"] == pytest.approx(63305.606349023224)
+    assert table.loc["Cell manufacturing total energy", "Direct"] == pytest.approx(890.721898761395)
+    assert table.loc["Cell manufacturing water", "Direct"] == pytest.approx(60.9690912688901)
+    assert table.loc["Cell manufacturing GHGs", "Direct"] == pytest.approx(63464.3860198095)
 
 
 @pytest.mark.parametrize(

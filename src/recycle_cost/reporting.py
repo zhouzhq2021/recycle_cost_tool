@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 import pandas as pd
 
 from .cathode import (
@@ -856,7 +858,6 @@ def python_ported_manufacturing_output_summary(
     manufacturing_chemistry = scenario.manufacturing_chemistry if scenario is not None else None
     manufacturing_location = scenario.manufacturing_location if scenario is not None else None
     cell_factor, pack_factor = _output_conversion_factors(manufacturing_chemistry)
-    recycled_cell_cost = manufacturing_cell_cost_summary("recycled").set_index(CommonColumns.ITEM)
     cell_env = manufacturing_cell_environment_calculated(manufacturing_chemistry, manufacturing_location).set_index(
         CommonColumns.METRIC
     )
@@ -936,8 +937,10 @@ def python_ported_manufacturing_output_summary(
     add_recycled_route_values(
         records[-1],
         cost_metric,
-        {key: recycled_cell_cost.loc["Total", cost_column] * cell_factor for key, (cost_column, _, _) in recycled_routes.items()},
+        {key: math.nan for key in recycled_routes},
     )
+    for key in recycled_routes:
+        records[-1][f"recycled_{key}_status"] = "unavailable_workbook_error"
 
     for output_metric, cell_metric, pack_metric, multiplier in metric_specs:
         python_cell = cell_env.loc[cell_metric, ManufacturingColumns.TOTAL] * multiplier * cell_factor

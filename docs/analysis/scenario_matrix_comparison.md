@@ -30,10 +30,10 @@ None.
 
 1. Selected-route recycling parity now holds across the 15-scenario matrix for cost, revenue, total energy, water, and GHG.
 2. The public Output summary intentionally uses workbook-style total revenue and cost cache rows for parity, while detailed CM recovery tables still expose scenario-derived material/revenue internals for audit.
-3. Virgin cell manufacturing Output parity now covers the LFP/NCA/NMC811 chemistry cases in this matrix for cost, total energy, water, and GHG. Remaining known broad gaps are recycled manufacturing cost columns and the small Direct regenerated manufacturing environment residual.
+3. Virgin cell manufacturing Output parity now covers the LFP/NCA/NMC811 chemistry cases in this matrix for cost, total energy, water, and GHG. Direct regenerated manufacturing environment parity now covers the tested NMC622/LFP/NCA/NMC811 cases. Recycled manufacturing cost route cells are now exposed as unavailable instead of false zero because the workbook emits `#DIV/0!`, `#N/A`, or `#NAME?` for those routes.
 
 ## Recommended Fix Order
 
-1. Port recycled manufacturing cost formulas; current workbook cache rows are zero when `Man Rec Par.` is not fully selected, while environment rows are now scenario-calculated.
+1. Optionally add a Python-only estimate for recycled manufacturing cost if that route should be decision-useful despite workbook errors.
 2. Decide whether detailed CM recovery revenue tables should continue to expose scenario-derived values or also offer a workbook-parity view.
 3. Convert the current output-parity constants into typed parameter objects or extracted workbook parameter tables to reduce hard-coded values.
