@@ -163,10 +163,16 @@ PREPROCESSING_ENVIRONMENT_ROWS = (
     ("OC", 0.0, 0.00688568362296401, 0.0),
     ("CH4", 0.0, 0.550640490249799, 0.0),
     ("N2O", 0.0, 0.006305979617982419, 0.0),
-    ("CO2", 0.0, 213.5823513019894, 0.0),
-    ("CO2 w/ C in VOC & CO", 0.0, 214.16616290500264, 0.0),
-    ("GHGs", 0.0, 232.29678195015583, 0.0),
+    ("CO2", 151.8741932781846, 213.5823513019894, 0.0),
+    ("CO2 w/ C in VOC & CO", 151.8741932781846, 214.16616290500264, 0.0),
+    ("GHGs", 151.8741932781846, 232.29678195015583, 0.0),
 )
+
+
+def cm_recovery_black_mass_value(scenario: Scenario) -> float:
+    black_mass = preprocessing_black_mass_composition(scenario).set_index(CommonColumns.COMPONENT)
+    graphite = black_mass.loc["Graphite", "fraction_of_black_mass"] if "Graphite" in black_mass.index else 0.0
+    return graphite * 0.9 * 0.2 / 0.01
 
 
 def default_preprocessing_parameters() -> PreprocessingParameters:
@@ -306,7 +312,9 @@ def preprocessing_opex_summary(scenario: Scenario) -> pd.DataFrame:
         + natural_gas_rate * params.natural_gas_mj_per_kg * annual_kg
     )
     effluent = (
-        solid_waste_rate * (products.get("Flue Dust", 0.0) + products.get("Waste (solid)", 0.0)) * annual_kg
+        solid_waste_rate
+        * max(products.get("Flue Dust", 0.0) + products.get("Waste (solid)", 0.0), 0.0)
+        * annual_kg
         + wastewater_rate * params.wastewater_gal_per_kg / 3.78541 * throughput_tpy
     )
 
@@ -331,35 +339,36 @@ def preprocessing_opex_summary(scenario: Scenario) -> pd.DataFrame:
     maintenance = isbl * 0.05
     taxes_insurance = (isbl + osbl) * 0.01
     rent = (isbl + osbl) * 0.02
-    rnd = 0.01 * throughput_tpy * 1000 * 0.0
-    gna = labor_costs * 0.65
-    fixed_cost_before_sales = labor_costs + maintenance + taxes_insurance + rent + rnd + gna
+    plant_overhead_labor = labor_costs * 0.65
     env_charges = (isbl + osbl) * 0.01
 
-    # Selling/marketing and license fees are each 1% of TCOP. Solve the circular TCOP equation.
-    sales_license_factor = 0.02
     interest_fixed = 0.0 * fixed_capital
-    env_charges = (isbl + osbl) * 0.01
 
     if throughput_tpy > 0:
-        k1 = 7 / 52
-        k2 = -raw_materials * 2 / 52 + 0.02 * (isbl + osbl)
-        fcop_base = labor_costs + maintenance + taxes_insurance + rent + rnd + gna + env_charges + interest_fixed
         annualized_capital = _annualized_capital_cost(fixed_capital, plant.capital_charge_rate, plant.plant_life_years)
-        denom = 0.98 - 0.06 * k1
-        ccop = (variable_costs + fcop_base + 0.02 * annualized_capital + 0.06 * k2) / denom
-        working_capital = k1 * ccop + k2
+        working_capital = variable_costs * 7 / 52 - raw_materials * 2 / 52 + 0.02 * (isbl + osbl)
         interest_working = 0.06 * working_capital
-        tcop = ccop + annualized_capital
-        sales_marketing = 0.01 * tcop
-        license_fees = 0.01 * tcop
-        fixed_costs = fcop_base + interest_working + sales_marketing + license_fees
+        r_and_d = 0.01 * annual_kg * cm_recovery_black_mass_value(scenario)
+        license_fees = 0.01 * (variable_costs + annualized_capital)
+        plant_overhead = r_and_d + license_fees + plant_overhead_labor
+        fixed_costs = (
+            labor_costs
+            + maintenance
+            + taxes_insurance
+            + rent
+            + plant_overhead
+            + env_charges
+            + interest_fixed
+            + interest_working
+        )
         cash_cost = variable_costs + fixed_costs
+        tcop = cash_cost + annualized_capital
     else:
         working_capital = 0.0
         interest_working = 0.0
-        sales_marketing = 0.0
+        r_and_d = 0.0
         license_fees = 0.0
+        plant_overhead = 0.0
         fixed_costs = 0.0
         cash_cost = 0.0
         annualized_capital = 0.0
@@ -379,7 +388,7 @@ def preprocessing_opex_summary(scenario: Scenario) -> pd.DataFrame:
         ("Maintenance", maintenance),
         ("Property taxes and insurance", taxes_insurance),
         ("Rent of land and/or buildings", rent),
-        ("General plant overhead", rnd + sales_marketing + gna),
+        ("General plant overhead", plant_overhead),
         ("Allocated environmental charges", env_charges),
         ("Running license fees and royalty payments", license_fees),
         ("Interest on fixed capital", interest_fixed),
@@ -559,15 +568,17 @@ def preprocessing_black_mass_composition(scenario: Scenario) -> pd.DataFrame:
 
 
 def preprocessing_environment_summary(scenario: Scenario) -> pd.DataFrame:
+    throughput = preprocessing_throughput(scenario)
     rows = []
     for metric, material, energy, process in PREPROCESSING_ENVIRONMENT_ROWS:
+        material_input = material if throughput > 0 else 0.0
         rows.append(
             {
                 CommonColumns.METRIC: metric,
-                "material_input": material,
+                "material_input": material_input,
                 "energy_input": energy,
                 "process": process,
-                ManufacturingColumns.TOTAL: material + energy + process,
+                ManufacturingColumns.TOTAL: material_input + energy + process,
             }
         )
     return pd.DataFrame(rows)
@@ -598,8 +609,8 @@ def preprocessing_cost_summary(scenario: Scenario) -> pd.DataFrame:
     total_cost = 0.0
     if throughput > 0:
         total_cost = (opex.get("Cash cost of production", 0.0) + opex.get("Annualized capital cost", 0.0)) / throughput / 1000
-        if feedstock_fee_per_kg > 0:
-            total_cost -= feedstock_fee_per_kg
+        if feedstock_fee_per_kg < 0:
+            total_cost += feedstock_fee_per_kg
     
     records.append({CommonColumns.ITEM: "Total cost ($/kg feedstock processed)", CommonColumns.VALUE: total_cost})
     return pd.DataFrame(records)

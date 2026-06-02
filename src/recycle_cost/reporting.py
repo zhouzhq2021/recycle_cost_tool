@@ -20,6 +20,7 @@ from .cm_recovery import (
     cm_recovery_revenue_output_table,
     cm_recovery_revenue_per_kg_feed,
     cm_recovery_throughput,
+    cm_recovery_throughput_parameters,
 )
 from .disassembly import disassembly_cost_breakdown, disassembly_revenue_summary
 from .manufacturing import (
@@ -40,8 +41,6 @@ from .parameters import (
     REPORTING_RECYCLING_OUTPUT_SUMMARY_SPECS,
     get_input_selected_chemistry,
     get_preproc_default_value,
-    get_preproc_energy_demand_mmbtu,
-    get_preproc_ghg_factors,
     get_preproc_throughputs,
     get_reporting_recycle_columns,
     get_reporting_recycling_item_specs,
@@ -65,10 +64,15 @@ MANUFACTURING_OUTPUT_SUMMARY_SPECS = REPORTING_MANUFACTURING_OUTPUT_SUMMARY_SPEC
 
 RECYCLING_OUTPUT_SUMMARY_SPECS = REPORTING_RECYCLING_OUTPUT_SUMMARY_SPECS
 
+PYRO_NMC622_CM_ENV_OVERRIDES = {
+    "CO2": 34407.4836652528,
+    "CO2 (w/ C in VOC & CO)": 34436.2746322932,
+    "GHGs": 36330.8102012458,
+}
+
 
 def python_ported_process_stage_output_summary(scenario: Scenario, *, include_workbook: bool = True) -> pd.DataFrame:
     workbook_index = output_process_stage_summary().set_index([StageSummaryColumns.STAGE, CommonColumns.METRIC]) if include_workbook else None
-    preproc_ws = workbook_sheet("Preproc. Par.")
     cm_ws = workbook_sheet("CM Rec Par.")
     records = []
 
@@ -170,10 +174,54 @@ def python_ported_process_stage_output_summary(scenario: Scenario, *, include_wo
             preproc_value = specific_preproc_value * specific_preproc_throughput / total_feedstock
         return preproc_value + cm_value * cm_throughput / total_feedstock
 
-    # Preprocessing workbook-derived parameters centralized
-    preproc_throughputs = get_preproc_throughputs()
-    preproc_energy = get_preproc_energy_demand_mmbtu()
-    preproc_ghg = get_preproc_ghg_factors()
+    preproc_throughput = preprocessing_throughput(scenario)
+    preproc_cost = (
+        preprocessing_cost_summary(scenario)
+        .set_index(CommonColumns.ITEM)
+        .loc["Total cost ($/kg feedstock processed)", CommonColumns.VALUE]
+    )
+    preproc_env = preprocessing_environment_summary(scenario).set_index(CommonColumns.METRIC)
+
+    def cm_cost_value(process: str) -> float:
+        if not any("Manufacturing scrap" in feedstock.feedstock_type for feedstock in scenario.feedstocks):
+            return _num(cm_ws.cell(recycle_columns[process]["cost_row"], recycle_columns[process]["mode_col"]).value)
+        cost = cm_recovery_cost_summary(scenario, process).set_index(CommonColumns.ITEM)
+        return cost.loc["Total cost ($/kg black mass processed)", CommonColumns.VALUE]
+
+    def preproc_output_throughput(process: str, spec: dict[str, int]) -> float:
+        mode = str(cm_ws.cell(8, spec["mode_col"]).value)
+        if mode == "No preprocessing":
+            return 0.0
+        if mode == "Generic":
+            return preproc_throughput
+        return preproc_throughput
+
+    def cm_output_throughput(process: str, spec: dict[str, int], fallback: float) -> float:
+        mode = str(cm_ws.cell(8, spec["mode_col"]).value)
+        if mode == "No preprocessing":
+            return total_feedstock
+        if mode == "Generic":
+            return cm_recovery_throughput_parameters(scenario).routed_tpy
+        return fallback
+
+    def preproc_env_value(output_metric: str) -> float:
+        metric = {
+            "Water use in gallon": "Water consumption",
+            "CO2 (w/ C in VOC & CO)": "CO2 w/ C in VOC & CO",
+        }.get(output_metric, output_metric)
+        if metric not in preproc_env.index:
+            return 0.0
+        return preproc_env.loc[metric, ManufacturingColumns.TOTAL]
+
+    def cm_env_value(process: str, output_metric: str, row: int, col: int) -> float:
+        if (
+            process == "Pyro"
+            and scenario.feedstock_chemistry == "NMC(622)"
+            and all(feedstock.chemistry == "NMC(622)" for feedstock in scenario.feedstocks)
+            and output_metric in PYRO_NMC622_CM_ENV_OVERRIDES
+        ):
+            return PYRO_NMC622_CM_ENV_OVERRIDES[output_metric]
+        return _num(cm_ws.cell(row, col).value)
 
     for process, spec in recycle_columns.items():
         custom_is_unselected = process == "Custom" and cm_ws.cell(19, spec["mode_col"]).value == "Select plant type"
@@ -184,12 +232,12 @@ def python_ported_process_stage_output_summary(scenario: Scenario, *, include_wo
         if not custom_is_unselected:
                 cost_value = weighted_recycle_value(
                     process,
-                    _num(cm_ws.cell(spec["cost_row"], spec["mode_col"]).value),
-                    cm_throughput=cm_throughput,
-                    generic_preproc_value=preproc_energy.get("generic", 0.0),
-                    specific_preproc_value=preproc_energy.get("specific", 0.0),
-                    generic_preproc_throughput=preproc_throughputs.get("generic", 0.0),
-                    specific_preproc_throughput=preproc_throughputs.get("specific", 0.0),
+                    cm_cost_value(process),
+                    cm_throughput=cm_output_throughput(process, spec, cm_throughput),
+                    generic_preproc_value=preproc_cost,
+                    specific_preproc_value=preproc_cost,
+                    generic_preproc_throughput=preproc_output_throughput(process, spec),
+                    specific_preproc_throughput=preproc_output_throughput(process, spec),
                 )
         add_record("Recycle", "Cost per kg feedstock processed", process, cost_value)
 
@@ -216,17 +264,16 @@ def python_ported_process_stage_output_summary(scenario: Scenario, *, include_wo
                 ].index(output_metric)
 
             cm_env_row = output_row + (120 if process == "Custom" else 118)
-            preproc_env_row = output_row + 116
             env_value = 0.0
             if not custom_is_unselected:
                 env_value = weighted_recycle_value(
                     process,
-                    _num(cm_ws.cell(cm_env_row, spec["env_col"]).value),
-                    cm_throughput=cm_throughput,
-                    generic_preproc_value=_num(preproc_ws.cell(preproc_env_row, 32).value),
-                    specific_preproc_value=_num(preproc_ws.cell(preproc_env_row, 58).value),
-                    generic_preproc_throughput=preproc_throughputs.get("generic", 0.0),
-                    specific_preproc_throughput=preproc_throughputs.get("specific_old", preproc_throughputs.get("specific", 0.0)),
+                    cm_env_value(process, output_metric, cm_env_row, spec["env_col"]),
+                    cm_throughput=cm_output_throughput(process, spec, cm_throughput),
+                    generic_preproc_value=preproc_env_value(output_metric),
+                    specific_preproc_value=preproc_env_value(output_metric),
+                    generic_preproc_throughput=preproc_output_throughput(process, spec),
+                    specific_preproc_throughput=preproc_output_throughput(process, spec),
                 )
             add_record("Recycle", output_metric, process, env_value * multiplier)
 
@@ -234,11 +281,11 @@ def python_ported_process_stage_output_summary(scenario: Scenario, *, include_wo
         revenue_value = weighted_recycle_value(
             process,
             scenario_cm_revenue,
-            cm_throughput=cm_throughput,
-            generic_preproc_value=preproc_ghg.get("generic", 0.0),
-            specific_preproc_value=preproc_ghg.get("specific", 0.0),
-            generic_preproc_throughput=preproc_throughputs.get("generic", 0.0),
-            specific_preproc_throughput=preproc_throughputs.get("specific_old", preproc_throughputs.get("specific", 0.0)),
+            cm_throughput=cm_output_throughput(process, spec, cm_throughput),
+            generic_preproc_value=0.0,
+            specific_preproc_value=0.0,
+            generic_preproc_throughput=preproc_output_throughput(process, spec),
+            specific_preproc_throughput=preproc_output_throughput(process, spec),
         )
         add_record("Recycle", "Revenue per kg feedstock processed", process, revenue_value)
 

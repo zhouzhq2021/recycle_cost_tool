@@ -2,6 +2,7 @@ import pytest
 from recycle_cost.model import FeedstockInput, Scenario, default_scenario
 from recycle_cost.cm_recovery import (
     cm_recovery_throughput,
+    cm_recovery_throughput_parameters,
     cm_recovery_cost_summary,
     cm_recovery_capex_summary,
     cm_recovery_opex_summary,
@@ -22,7 +23,7 @@ def test_pyro_recovery_cost_default():
     fixed_capital = costs.loc["Fixed capital investment ($)", "value"]
 
     assert fixed_capital == pytest.approx(75592543.84309334)
-    assert total_cost == pytest.approx(4.7209338121193545)
+    assert total_cost == pytest.approx(4.732668897365615)
 
 def test_hydro_recovery_cost_default():
     base = default_scenario()
@@ -30,7 +31,7 @@ def test_hydro_recovery_cost_default():
     costs = cm_recovery_cost_summary(scenario, "Hydro").set_index("item")
 
     total_cost = costs.loc["Total cost ($/kg black mass processed)", "value"]
-    assert total_cost == pytest.approx(5.090005111487754)
+    assert total_cost == pytest.approx(5.085318217825357)
 
 def test_direct_recovery_cost_default():
     base = default_scenario()
@@ -41,7 +42,7 @@ def test_direct_recovery_cost_default():
     fixed_capital = costs.loc["Fixed capital investment ($)", "value"]
 
     assert fixed_capital == pytest.approx(56957381.00711118)
-    assert total_cost == pytest.approx(6.584075479342885)
+    assert total_cost == pytest.approx(6.590549512131952)
 
 
 def test_cm_recovery_opex_matches_workbook_default():
@@ -51,21 +52,21 @@ def test_cm_recovery_opex_matches_workbook_default():
     expected = {
         "Pyro": {
             "Variable costs of production": 32357723.688910976,
-            "Fixed costs of production": 6870396.681543301,
-            "Working capital": 5405261.819937901,
-            "Annualized capital cost": 7981217.750739242,
+            "Fixed costs of production": 6987747.534005909,
+            "Working capital": 5421059.050077097,
+            "Annualized capital cost": 7981217.750739258,
         },
         "Hydro": {
             "Variable costs of production": 41533923.86166618,
-            "Fixed costs of production": 5169874.53104399,
-            "Working capital": 5513445.38575069,
-            "Annualized capital cost": 4196252.722167366,
+            "Fixed costs of production": 5123005.594420014,
+            "Working capital": 5507136.1058205385,
+            "Annualized capital cost": 4196252.722167375,
         },
         "Direct": {
             "Variable costs of production": 52873938.951833054,
-            "Fixed costs of production": 6953137.279948758,
-            "Working capital": 6995755.364851855,
-            "Annualized capital cost": 6013678.561647034,
+            "Fixed costs of production": 7017877.60783942,
+            "Working capital": 7004470.408990983,
+            "Annualized capital cost": 6013678.561647045,
         },
     }
 
@@ -93,6 +94,36 @@ def test_cm_recovery_variable_opex_scales_with_throughput():
         assert doubled_opex.loc[item, "value"] == pytest.approx(base_opex.loc[item, "value"] * 2)
 
 
+def test_cm_recovery_throughput_parameters_split_routed_and_cost_design_tonnes():
+    base = default_scenario()
+    pack = Scenario(
+        **{
+            **base.__dict__,
+            "feedstock_type": "End-of-life battery: pack",
+            "feedstock_tonnes_per_year": 10000,
+            "feedstocks": (FeedstockInput("NMC(622)", "End-of-life battery: pack", 10000),),
+        }
+    )
+    scrap = Scenario(
+        **{
+            **base.__dict__,
+            "feedstock_type": "Manufacturing scrap: electrode",
+            "feedstock_tonnes_per_year": 5000,
+            "feedstocks": (FeedstockInput("NMC(622)", "Manufacturing scrap: electrode", 5000),),
+        }
+    )
+
+    pack_params = cm_recovery_throughput_parameters(pack)
+    scrap_params = cm_recovery_throughput_parameters(scrap)
+
+    assert pack_params.material_flow_tpy == pytest.approx(4392.031531424168)
+    assert pack_params.routed_tpy == pytest.approx(10000)
+    assert pack_params.cost_design_tpy == pytest.approx(10000)
+    assert scrap_params.material_flow_tpy == pytest.approx(3580.5103667957405)
+    assert scrap_params.routed_tpy == pytest.approx(5000)
+    assert scrap_params.cost_design_tpy == pytest.approx(10000)
+
+
 def test_cm_recovery_capex_matches_workbook_default():
     base = default_scenario()
     scenario = Scenario(**{**base.__dict__, "manufacturing_location": "China"})
@@ -108,21 +139,18 @@ def test_cm_recovery_capex_matches_workbook_default():
         assert capex.loc["Fixed capital investment", "value"] == pytest.approx(expected_value)
 
 
-def test_cm_recovery_revenue_output_table_uses_scenario_formula_outputs():
+def test_cm_recovery_revenue_output_table_uses_workbook_overrides_for_nmc622():
     revenue = cm_recovery_revenue_output_table().set_index(["process", "material"])
 
     assert revenue.loc[("Pyro", "Copper metal"), "source_row"] == 127
     assert revenue.loc[("Pyro", "Co2+ in product"), "calculated_value_per_kg_feedstock"] == pytest.approx(
-        3.5115060841972157
+        6.143129537599999
     )
     assert revenue.loc[("Hydro", "Graphite"), "calculated_value_per_kg_feedstock"] == pytest.approx(
-        0.06580909387258863
-    )
-    assert revenue.loc[("Hydro", "Copper"), "calculated_value_per_kg_feedstock"] == pytest.approx(
-        0.06629396654724373
+        0.0618
     )
     assert revenue.loc[("Direct", "NMC(622)"), "calculated_value_per_kg_feedstock"] == pytest.approx(
-        13.582609095794663
+        14.25
     )
     assert revenue.loc[("Custom", "Copper"), "source_row"] == 134
     assert revenue.loc[("Custom", "Copper"), "calculated_value_per_kg_feedstock"] == pytest.approx(

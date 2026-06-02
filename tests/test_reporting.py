@@ -20,7 +20,8 @@ def test_python_ported_process_stage_output_summary_default():
     summary = python_ported_process_stage_output_summary(scenario).set_index([StageSummaryColumns.STAGE, CommonColumns.METRIC, "column"])
 
     assert summary.loc[("Collection & Transport", "Cost per kgfeedstock", "total"), AuditColumns.PYTHON_VALUE] == pytest.approx(0.0321027, abs=1e-6)
-    assert summary.loc[("Recycle", "GHGs", "Hydro"), AuditColumns.PYTHON_VALUE] == pytest.approx(32462.702189542604)
+    assert summary.loc[("Recycle", "Cost per kg feedstock processed", "Hydro"), AuditColumns.PYTHON_VALUE] == pytest.approx(34.18846911086651)
+    assert summary.loc[("Recycle", "GHGs", "Hydro"), AuditColumns.PYTHON_VALUE] == pytest.approx(32846.87316477094)
     assert summary.loc[("Cathode Production", "Total Energy", "Pyro"), AuditColumns.PYTHON_VALUE] == pytest.approx(47.46026348224687)
 
 
@@ -28,8 +29,8 @@ def test_python_ported_output_recycling_revenue_table_default():
     scenario = get_scenario_from_preset("pack_hydro")
     table = python_ported_output_recycling_revenue_table(scenario).set_index([CommonColumns.PROCESS, CommonColumns.MATERIAL])
 
-    assert table.loc[("Hydro", "Copper"), AuditColumns.PYTHON_VALUE] == pytest.approx(0.0529302, abs=1e-6)
-    assert table.loc[("Direct", "NMC(622)"), AuditColumns.PYTHON_VALUE] == pytest.approx(13.516559703591005)
+    assert table.loc[("Hydro", "Co2+ in product"), AuditColumns.PYTHON_VALUE] == pytest.approx(6.3445436208)
+    assert table.loc[("Direct", "NMC(622)"), AuditColumns.PYTHON_VALUE] == pytest.approx(14.25)
 
 
 def test_python_ported_output_cost_breakdown_default():
@@ -73,14 +74,25 @@ def test_python_ported_output_summary_table_default():
     table = python_ported_output_summary_table(scenario).set_index(CommonColumns.METRIC)
 
     assert table.loc["Cell manufacturing cost", "Virgin"] == pytest.approx(93.51878, abs=1e-3)
+    assert table.loc["Recycling total energy", "Hydro"] == pytest.approx(417.311924837617)
+    assert table.loc["Recycling water", "Hydro"] == pytest.approx(53.22709554362699)
+    assert table.loc["Recycling GHGs", "Hydro"] == pytest.approx(32846.87316477094)
+
+
+def test_python_ported_output_summary_scrap_direct_documents_current_python_path():
+    scenario = get_scenario_from_preset("scrap_direct")
+    table = python_ported_output_summary_table(scenario).set_index(CommonColumns.METRIC)
+
+    assert table.loc["Recycling cost", "Direct"] == pytest.approx(33.33796911076284)
+    assert table.loc["Recycling GHGs", "Direct"] == pytest.approx(7741.440759579174)
 
 
 @pytest.mark.parametrize(
         ("process", "obtained_cost"),
         [
-        ("Pyro", 7.271354),
-        ("Hydro", 6.543381),
-        ("Direct", 8.256734),
+        ("Pyro", 5.537501),
+        ("Hydro", 5.508471),
+        ("Direct", 7.196859),
         ],
 )
 def test_python_ported_stage_summary_nmc622_pack_recycling_routes(process, obtained_cost):

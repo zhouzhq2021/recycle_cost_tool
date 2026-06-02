@@ -56,9 +56,9 @@ def test_nmc622_pack_preprocessing_cost():
     assert costs.loc["Fixed capital investment ($)", "value"] > 10000000 # > 10M
     assert costs.loc["Cash cost of production ($/yr)", "value"] > 1000000 # > 1M
     
-    # Total cost per kg should be around 0.5 - 2.0 $/kg for 10k tpy pack
+    # Positive feedstock fees are included as raw material cost in the workbook formula.
     total_cost_per_kg = costs.loc["Total cost ($/kg feedstock processed)", "value"]
-    assert 0.1 < total_cost_per_kg < 5.0
+    assert total_cost_per_kg == pytest.approx(29.103150893041146)
 
 def test_preprocessing_cost_scaling():
     base = default_scenario()

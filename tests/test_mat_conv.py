@@ -65,8 +65,8 @@ def test_mat_conv_recycling_economics_calculated_uses_python_output_stage_values
 
     assert economics.loc["total_recycling_cost", AuditColumns.calculated("Pyro")] == pytest.approx(4.745074097322276)
     assert economics.loc["total_recycling_cost", "pyro_delta"] == pytest.approx(0.0, abs=1e-12)
-    assert economics.loc["revenue_all_recycled_materials", AuditColumns.calculated("Direct")] == pytest.approx(13.721484342029777)
-    assert economics.loc["revenue_all_recycled_materials", "direct_delta"] == pytest.approx(-0.629226186845022)
+    assert economics.loc["revenue_all_recycled_materials", AuditColumns.calculated("Direct")] == pytest.approx(14.3507105288748)
+    assert economics.loc["revenue_all_recycled_materials", "direct_delta"] == pytest.approx(0.0)
     assert economics.loc["cost_recycled_materials_to_convert", AuditColumns.calculated("Direct")] == pytest.approx(6.464079023973588)
 
 

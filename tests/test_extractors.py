@@ -202,4 +202,4 @@ def test_nmc622_pack_feedstock_drives_generic_preprocessing_formulas():
     assert products.loc["Copper", "kg_per_kg_feedstock"] == pytest.approx(0.06537785446393655)
     assert black_mass.loc["NMC(622)", "fraction_of_black_mass"] == pytest.approx(0.6007359868262668)
     assert black_mass.loc["Graphite", "fraction_of_black_mass"] == pytest.approx(0.36382821104978386)
-    assert costs.loc["Total cost ($/kg feedstock processed)", "value"] == pytest.approx(2.445665174268349)
+    assert costs.loc["Total cost ($/kg feedstock processed)", "value"] == pytest.approx(29.103150893041146)

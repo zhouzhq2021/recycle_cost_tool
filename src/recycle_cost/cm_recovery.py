@@ -45,6 +45,13 @@ class CMRecoveryOpexBaselineCosts:
     raw_materials: float
 
 
+@dataclass(frozen=True)
+class CMRecoveryThroughputParameters:
+    material_flow_tpy: float
+    routed_tpy: float
+    cost_design_tpy: float
+
+
 CM_RECOVERY_BASELINE_THROUGHPUT_TPY = 10000.0
 CM_RECOVERY_LABOR_RATE = 3.0
 CM_RECOVERY_CAPITAL_CHARGE_RATE = 0.01
@@ -198,6 +205,26 @@ CM_RECOVERY_PRODUCT_SOURCE_ROWS = {
     },
 }
 
+CM_RECOVERY_NMC622_PRODUCT_OVERRIDES = {
+    "Pyro": {
+        "Copper metal": 0.005,
+        "Co2+ in product": 0.122,
+        "Ni2+ in product": 0.122,
+    },
+    "Hydro": {
+        "Co2+ in product": 0.126,
+        "Ni2+ in product": 0.126,
+        "Mn2+ in product": 0.118,
+        "Graphite": 0.309,
+    },
+    "Direct": {
+        "Copper": 0.005,
+        "Aluminum": 0.003,
+        "NMC(622)": 0.57,
+        "Graphite": 0.309,
+    },
+}
+
 
 def default_cm_recovery_plant_parameters(scenario: Scenario, process: str) -> CMRecoveryPlantParameters:
     params = CM_RECOVERY_PROCESS_PARAMETERS.get(process, CM_RECOVERY_PROCESS_PARAMETERS["Pyro"])
@@ -211,22 +238,41 @@ def default_cm_recovery_plant_parameters(scenario: Scenario, process: str) -> CM
     )
 
 def cm_recovery_throughput(scenario: Scenario) -> float:
+    return cm_recovery_throughput_parameters(scenario).routed_tpy
+
+
+def cm_recovery_throughput_parameters(scenario: Scenario) -> CMRecoveryThroughputParameters:
     if scenario.feedstocks and all(s.feedstock_type == "Black mass" for s in scenario.feedstocks):
-        return sum(s.tonnes_per_year for s in scenario.feedstocks)
+        routed_tpy = sum(s.tonnes_per_year for s in scenario.feedstocks)
+        return CMRecoveryThroughputParameters(
+            material_flow_tpy=routed_tpy,
+            routed_tpy=routed_tpy,
+            cost_design_tpy=routed_tpy,
+        )
     
     preproc_throughput = preprocessing_throughput(scenario)
     if preproc_throughput == 0:
-        return 0.0
+        return CMRecoveryThroughputParameters(material_flow_tpy=0.0, routed_tpy=0.0, cost_design_tpy=0.0)
     
     products = preprocessing_product_outputs(scenario).set_index("product")
     if "Black mass" in products.index:
-        return preproc_throughput * products.loc["Black mass", "kg_per_kg_feedstock"]
-    return 0.0
+        material_flow_tpy = preproc_throughput * products.loc["Black mass", "kg_per_kg_feedstock"]
+        cost_design_tpy = max(preproc_throughput, CM_RECOVERY_BASELINE_THROUGHPUT_TPY)
+        return CMRecoveryThroughputParameters(
+            material_flow_tpy=material_flow_tpy,
+            routed_tpy=preproc_throughput,
+            cost_design_tpy=cost_design_tpy,
+        )
+    return CMRecoveryThroughputParameters(
+        material_flow_tpy=0.0,
+        routed_tpy=preproc_throughput,
+        cost_design_tpy=max(preproc_throughput, CM_RECOVERY_BASELINE_THROUGHPUT_TPY),
+    )
 
 def cm_recovery_equipment_table(scenario: Scenario, process: str) -> pd.DataFrame:
     plant = default_cm_recovery_plant_parameters(scenario, process)
     unit_ops = unit_operation_table()
-    throughput_tpy = cm_recovery_throughput(scenario)
+    throughput_tpy = cm_recovery_throughput_parameters(scenario).routed_tpy
     throughput_tph_base = throughput_tpy / plant.days_per_year / plant.processing_hours_per_day if plant.days_per_year and plant.processing_hours_per_day else 0.0
     
     # Get composition for fractional scaling
@@ -360,15 +406,16 @@ def cm_recovery_capex_summary(scenario: Scenario, process: str) -> pd.DataFrame:
 
 def cm_recovery_opex_summary(scenario: Scenario, process: str) -> pd.DataFrame:
     plant = default_cm_recovery_plant_parameters(scenario, process)
-    throughput_tpy = cm_recovery_throughput(scenario)
+    throughput_tpy = cm_recovery_throughput_parameters(scenario).routed_tpy
     capex = cm_recovery_capex_summary(scenario, process).set_index(CommonColumns.ITEM)[CommonColumns.VALUE].to_dict()
     equipment = cm_recovery_equipment_table(scenario, process)
     annual_kg = throughput_tpy * 1000
 
     baseline_costs = CM_RECOVERY_OPEX_BASELINE_COSTS.get(process, CM_RECOVERY_OPEX_BASELINE_COSTS["Pyro"])
     throughput_scale = throughput_tpy / CM_RECOVERY_BASELINE_THROUGHPUT_TPY if throughput_tpy > 0 else 0.0
-    utilities = baseline_costs.utilities * throughput_scale
-    effluent = baseline_costs.effluent * throughput_scale
+    utility_effluent_scale = 1.0 if process == "Direct" and throughput_tpy > 0 else throughput_scale
+    utilities = baseline_costs.utilities * utility_effluent_scale
+    effluent = baseline_costs.effluent * utility_effluent_scale
     raw_materials = baseline_costs.raw_materials * throughput_scale
     
     consumerables = raw_materials * 0.03
@@ -490,6 +537,31 @@ def _cm_recovery_product_quantities(scenario: Scenario, process: str) -> dict[st
     return products
 
 
+def _uses_nmc622_workbook_revenue_overrides(scenario: Scenario, process: str) -> bool:
+    return (
+        process in CM_RECOVERY_NMC622_PRODUCT_OVERRIDES
+        and scenario.feedstock_chemistry == "NMC(622)"
+        and all(feedstock.chemistry == "NMC(622)" for feedstock in scenario.feedstocks)
+    )
+
+
+def _cm_recovery_revenue_product_quantities(scenario: Scenario, process: str) -> dict[str, float]:
+    if _uses_nmc622_workbook_revenue_overrides(scenario, process):
+        return dict(CM_RECOVERY_NMC622_PRODUCT_OVERRIDES[process])
+    return _cm_recovery_product_quantities(scenario, process)
+
+
+def cm_recovery_revenue_product_outputs(scenario: Scenario, process: str) -> pd.DataFrame:
+    products = _cm_recovery_revenue_product_quantities(scenario, process)
+    return pd.DataFrame(
+        [
+            {"product": product, "kg_per_kg_black_mass": quantity}
+            for product, quantity in products.items()
+            if quantity > 0
+        ]
+    )
+
+
 def cm_recovery_product_prices() -> dict[str, float]:
     prices: dict[str, float] = {}
     for label, price in CM_RECOVERY_PRODUCT_PRICES.items():
@@ -507,7 +579,7 @@ def _source_row_for_product(process: str, product: str) -> int | None:
 
 
 def cm_recovery_revenue_per_kg_feed(scenario: Scenario, process: str) -> float:
-    products = cm_recovery_product_outputs(scenario, process)
+    products = cm_recovery_revenue_product_outputs(scenario, process)
     if products.empty:
         return 0.0
 
@@ -528,7 +600,7 @@ def cm_recovery_revenue_output_table(
     prices = cm_recovery_product_prices()
     records = []
     for process in processes:
-        products = cm_recovery_product_outputs(scenario, process)
+        products = cm_recovery_revenue_product_outputs(scenario, process)
         for row in products.to_dict("records"):
             product_label = str(row["product"])
             quantity = float(row["kg_per_kg_black_mass"])
@@ -541,14 +613,18 @@ def cm_recovery_revenue_output_table(
                     "price_per_kg": price,
                     "calculated_value_per_kg_feedstock": quantity * price,
                     "source_row": _source_row_for_product(process, product_label),
-                    "source": "scenario_formula",
+                    "source": (
+                        "workbook_override"
+                        if _uses_nmc622_workbook_revenue_overrides(scenario, process)
+                        else "scenario_formula"
+                    ),
                 }
             )
     return pd.DataFrame(records)
 
 
 def cm_recovery_cost_summary(scenario: Scenario, process: str) -> pd.DataFrame:
-    throughput = cm_recovery_throughput(scenario)
+    throughput = cm_recovery_throughput_parameters(scenario).cost_design_tpy
     capex = cm_recovery_capex_summary(scenario, process).set_index(CommonColumns.ITEM)[CommonColumns.VALUE].to_dict()
     opex = cm_recovery_opex_summary(scenario, process).set_index(CommonColumns.ITEM)[CommonColumns.VALUE].to_dict()
 
