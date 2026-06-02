@@ -1,6 +1,27 @@
 # recycle-cost 使用说明手册
 
+[![GitHub stars](https://img.shields.io/github/stars/zhouzhq2021/recycle_cost_tool?style=social)](https://github.com/zhouzhq2021/recycle_cost_tool/stargazers)
+[![Tests](https://img.shields.io/badge/tests-105%20passed-brightgreen)](#10-开发与测试)
+[![Python](https://img.shields.io/badge/python-3.13-blue)](pyproject.toml)
+[![Streamlit](https://img.shields.io/badge/UI-Streamlit-ff4b4b)](app.py)
+
+> Star 数量统计使用 GitHub 动态 badge 展示，会随仓库当前 star 数自动更新。
+
 `recycle-cost` 是对 `EverBatt 2023.xlsm` 的 Python/Streamlit 迁移版本，用于计算电池回收与制造过程中的成本、收入、能耗、水耗和温室气体排放。项目保留原始 Excel 工作簿作为参数来源和回归校验基准，但用户侧计算、导出和批量场景运行已经转向 Python 公式路径。
+
+## 项目简介
+
+`recycle-cost` 把 EverBatt 电池回收成本模型从 Excel 工作簿迁移为可测试、可审计、可批量运行的 Python 应用。它支持 Pyro、Hydro、Direct 等回收路线，覆盖运输、拆解、预处理、黑粉回收、材料转换、正极生产、电芯制造和电池包制造，并通过 Streamlit 页面和 CLI 同时服务交互式分析与批量场景评估。
+
+这个项目适合用于电池回收路线比较、回收经济性评估、GHG/能耗/水耗核算、Excel 模型迁移方法展示，以及科研、工程和产业分析中的可复现实验。
+
+核心亮点：
+
+- 从 Excel 公式迁移为 Python 计算路径，保留 workbook 作为回归校验 oracle。
+- 用 typed scenario/parameter objects 收敛输入参数，减少运行路径里散落的单元格地址。
+- 支持 Streamlit 网页操作和 CLI 批量导出。
+- 覆盖回收收入、工艺成本、正极材料成本、电芯/pack 制造成本、能耗、水耗和 GHG。
+- 已用 LibreOffice 重算矩阵验证多组场景与 Excel 输出的一致性。
 
 ## 1. 项目能做什么
 
@@ -243,7 +264,7 @@ docs/analysis/scenario_matrix_comparison.md
 当前全量测试：
 
 ```text
-104 passed
+105 passed
 ```
 
 关键 parity 结果：
@@ -349,3 +370,28 @@ docs/analysis/                  迁移分析、清单和 parity 报告
 - 这是当前预期行为。
 - 原 workbook 对这些 route 的成本公式会返回错误值。
 - Python 版本用空值表示“不可用”，避免误报为 0。
+
+## 13. v0.1.0 发布说明
+
+`v0.1.0` 是第一个面向公开展示的迁移版本。
+
+本版本完成：
+
+- Streamlit 网页端场景配置、结果查看和导出。
+- CLI 批量场景运行与 CSV/JSON 导出。
+- 回收流程、材料转换、正极生产、制造成本和输出汇总的主要 Python 迁移。
+- cell/pack manufacturing cost 从 workbook 摘要单元格迁移为 Python 公式路径。
+- 15 组 LibreOffice 重算场景矩阵对比。
+- 默认和多场景回归测试。
+
+适合发布时使用的英文简介：
+
+```text
+recycle-cost is a Python/Streamlit migration of the EverBatt battery recycling cost model. It turns an Excel-based model into a testable, auditable, and batch-runnable tool for comparing Pyro, Hydro, and Direct recycling routes across cost, revenue, energy, water, and GHG metrics. The project keeps the original workbook as a regression oracle while moving user-facing calculations into typed Python models and formula modules.
+```
+
+适合发布时使用的中文简介：
+
+```text
+recycle-cost 是 EverBatt 电池回收成本模型的 Python/Streamlit 迁移版本。它把原本依赖 Excel 的回收经济性、材料价值、正极生产、电芯与电池包制造、能耗、水耗和温室气体排放计算，迁移为可测试、可审计、可批量运行的 Python 工具，同时保留原工作簿作为回归校验基准。
+```

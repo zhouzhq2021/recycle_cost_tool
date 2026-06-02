@@ -1,12 +1,14 @@
 import pytest
 
 from recycle_cost.manufacturing import (
+    manufacturing_cell_cost_summary_calculated,
     manufacturing_cell_cost_summary,
     manufacturing_cell_energy_consumption,
     manufacturing_cell_energy_inputs_calculated,
     manufacturing_cell_environment_summary,
     manufacturing_cell_material_composition,
     manufacturing_cell_material_cost,
+    manufacturing_cell_material_cost_calculated,
     manufacturing_cell_material_inputs,
     manufacturing_cell_material_inputs_calculated,
     manufacturing_cell_size,
@@ -14,7 +16,9 @@ from recycle_cost.manufacturing import (
     manufacturing_general_inputs,
     manufacturing_module_component_masses,
     manufacturing_pack_component_masses,
+    manufacturing_pack_cost_summary_calculated,
     manufacturing_pack_environment_summary,
+    manufacturing_pack_material_cost_calculated,
     manufacturing_pack_mass_summary,
     manufacturing_recycled_environment_totals_calculated,
     manufacturing_recycled_material_burdens_calculated,
@@ -50,6 +54,18 @@ def test_virgin_cell_manufacturing_calculation_snapshots_default():
     assert environment.loc["GHGs", "total"] == pytest.approx(20911.065890068643)
     assert material_cost.loc["Total", "cost_per_kg_cell"] == pytest.approx(20.81535117948296)
     assert cost_summary.loc["Total", "value"] == pytest.approx(29.291984173376168)
+
+
+def test_manufacturing_cost_calculated_tables_match_workbook_defaults():
+    material_cost = manufacturing_cell_material_cost_calculated()
+    cell_cost = manufacturing_cell_cost_summary_calculated()
+    pack_material_cost = manufacturing_pack_material_cost_calculated()
+    pack_cost = manufacturing_pack_cost_summary_calculated()
+
+    assert material_cost["delta"].abs().max() == pytest.approx(0.0, abs=1e-12)
+    assert cell_cost["delta"].abs().max() == pytest.approx(0.0, abs=1e-12)
+    assert pack_material_cost["delta"].abs().max() == pytest.approx(0.0, abs=1e-12)
+    assert pack_cost["delta"].abs().max() == pytest.approx(0.0, abs=1e-12)
 
 
 def test_cell_material_inputs_calculated_match_workbook_default():
