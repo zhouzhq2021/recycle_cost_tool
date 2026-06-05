@@ -56,7 +56,7 @@ def scenario_validation_messages(scenario: Scenario, text: dict[str, str]) -> li
         messages.append(("warning", text["zero_feedstock"]))
     if scenario.feedstock_type == "Black mass":
         messages.append(("info", text["black_mass_no_disassembly"]))
-    if process not in {"Pyro", "Hydro", "Direct"}:
+    if process not in {"Pyro", "Hydro", "Direct", "Custom"}:
         messages.append(("warning", text["select_process_warning"]))
     if safe_float(scenario.cathode_throughput_gwh_per_year) <= 0:
         messages.append(("info", text["cathode_zero"]))

@@ -172,3 +172,24 @@ def test_scenario_validation_messages_cover_guidance_cases():
         ("warning", "process"),
         ("info", "cathode"),
     ]
+
+
+def test_scenario_validation_accepts_custom_process():
+    scenario = Scenario(
+        **{
+            **default_scenario().__dict__,
+            "recycling_process": "Custom",
+            "feedstock_tonnes_per_year": 10000.0,
+            "cathode_throughput_gwh_per_year": 10.0,
+        }
+    )
+    text = {
+        "zero_feedstock": "zero",
+        "black_mass_no_disassembly": "black mass",
+        "select_process_warning": "process",
+        "cathode_zero": "cathode",
+    }
+
+    messages = scenario_validation_messages(scenario, text)
+
+    assert ("warning", "process") not in messages

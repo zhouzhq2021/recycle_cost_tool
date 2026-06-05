@@ -88,6 +88,26 @@ def test_python_ported_output_summary_scrap_direct_documents_current_python_path
     assert table.loc["Recycling GHGs", "Direct"] == pytest.approx(7610.990429185895)
 
 
+def test_custom_recycling_route_is_selectable_business_path():
+    scenario = get_scenario_from_preset("pack_custom")
+    stage_summary = python_ported_stage_summary(scenario, "Custom").set_index(StageSummaryColumns.STAGE)
+    output_summary = python_ported_output_summary_table(scenario).set_index(CommonColumns.METRIC)
+    report = python_ported_report_comparison(scenario)
+
+    assert stage_summary.loc["CM Recovery", StageSummaryColumns.PROCESS] == "Custom"
+    assert stage_summary.loc["CM Recovery", StageSummaryColumns.COST] == pytest.approx(6.17969026806374)
+    assert stage_summary.loc["Cathode Production", StageSummaryColumns.PROCESS] == "Custom"
+    assert output_summary.loc["Recycling cost", "Custom"] == pytest.approx(35.06240072946159)
+    assert output_summary.loc["Recycling revenue", "Custom"] == pytest.approx(20.1007105288748)
+    assert output_summary.loc["Recycling GHGs", "Custom"] == pytest.approx(9811.345390001805)
+    assert "Custom" in report.columns
+    assert report.loc[
+        (report["section"] == "Manufacturing")
+        & (report[CommonColumns.METRIC] == "Total energy consumption (MJ)"),
+        "Custom",
+    ].iloc[0] == pytest.approx(890.721898761395)
+
+
 def test_output_summary_recycled_manufacturing_environment_uses_scenario_content():
     scenario = get_scenario_from_preset("pack_direct")
     table = python_ported_output_summary_table(scenario).set_index(CommonColumns.METRIC)

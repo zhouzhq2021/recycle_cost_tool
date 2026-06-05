@@ -29,6 +29,7 @@ Python-calculated tables.
 5. [ONGOING] Some workbook constants remain as centralized workbook parameters in `parameters.py`; major CM recovery and fixed preprocessing runtime parameters are now Python constants, while larger source tables should move to typed dataclass/grouped parameter modules next.
 6. [DONE] CM recovery throughput semantics are split into typed objects: material-flow tonnes for process composition, routed tonnes for Output aggregation, and `DC25`-style cost-design tonnes for unit cost formulas.
 7. [DONE] `Manufacturing scrap: electrode` Direct recycling GHG now uses the feedstock-specific preprocessing process GHG path and matches LibreOffice output.
+8. [DONE] Output-parity overrides for feedstock-specific preprocessing cost, CM cost, Pyro CM environment, and mixed-feedstock cost are centralized in `output_parity.py` with typed keys/accessors instead of living in `reporting.py`.
 
 ## Snapshot Boundary
 

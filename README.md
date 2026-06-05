@@ -7,18 +7,19 @@
 
 > Star 数量统计使用 GitHub 动态 badge 展示，会随仓库当前 star 数自动更新。
 
-`recycle-cost` 是对 `EverBatt 2023.xlsm` 的 Python/Streamlit 迁移版本，用于计算电池回收与制造过程中的成本、收入、能耗、水耗和温室气体排放。项目保留原始 Excel 工作簿作为参数来源和回归校验基准，但用户侧计算、导出和批量场景运行已经转向 Python 公式路径。
+`recycle-cost` 是 EverBatt 电池回收成本模型的 Python/Streamlit 实现，用于计算电池回收与制造过程中的成本、收入、能耗、水耗和温室气体排放。项目以 Python 公式模块和 typed scenario/parameter objects 作为主要计算路径，支持进一步客制化、批量运行和工程化集成，不再局限于 Excel 工作簿交互。原始 `EverBatt 2023.xlsm` 保留为参数来源、参考快照和回归校验基准。
 
 ## 项目简介
 
-`recycle-cost` 把 EverBatt 电池回收成本模型从 Excel 工作簿迁移为可测试、可审计、可批量运行的 Python 应用。它支持 Pyro、Hydro、Direct 等回收路线，覆盖运输、拆解、预处理、黑粉回收、材料转换、正极生产、电芯制造和电池包制造，并通过 Streamlit 页面和 CLI 同时服务交互式分析与批量场景评估。
+`recycle-cost` 把 EverBatt 电池回收成本模型实现为可测试、可审计、可批量运行、可二次开发的 Python 应用。它支持 Pyro、Hydro、Direct 和 Custom 回收路线，覆盖运输、拆解、预处理、黑粉回收、材料转换、正极生产、电芯制造和电池包制造，并通过 Streamlit 页面和 CLI 同时服务交互式分析与批量场景评估。
 
-这个项目适合用于电池回收路线比较、回收经济性评估、GHG/能耗/水耗核算、Excel 模型迁移方法展示，以及科研、工程和产业分析中的可复现实验。
+这个项目适合用于电池回收路线比较、回收经济性评估、GHG/能耗/水耗核算、模型客制化开发，以及科研、工程和产业分析中的可复现实验。
 
 核心亮点：
 
-- 从 Excel 公式迁移为 Python 计算路径，保留 workbook 作为回归校验 oracle。
-- 用 typed scenario/parameter objects 收敛输入参数，减少运行路径里散落的单元格地址。
+- 以 Python 公式模块实现 EverBatt 成本模型，用户侧计算、导出和批量运行不依赖 Excel UI。
+- 保留 workbook 作为参数参考和回归校验 oracle，便于审计 Python 实现与原模型的一致性。
+- 用 typed scenario/parameter objects 收敛输入参数，便于新增化学体系、工艺路线、参数表和业务规则。
 - 支持 Streamlit 网页操作和 CLI 批量导出。
 - 覆盖回收收入、工艺成本、正极材料成本、电芯/pack 制造成本、能耗、水耗和 GHG。
 - 已用 LibreOffice 重算矩阵验证多组场景与 Excel 输出的一致性。
@@ -32,6 +33,7 @@
 - 查看流程阶段、回收工艺、正极生产、电芯与电池包制造、参数表和综合输出。
 - 导出当前场景 JSON、单表 CSV，以及包含场景和全部结果表的 ZIP。
 - 在非 Streamlit 环境下用 CLI 批量运行场景并导出结果。
+- 基于 Python 模块继续扩展自定义场景、参数、流程和输出，不受 Excel 页面结构限制。
 - 对 Python 结果和 LibreOffice 重算后的 Excel 结果做一致性验证。
 
 ## 2. 环境准备
@@ -91,7 +93,7 @@ http://localhost:8502
    - `Pyro`
    - `Hydro`
    - `Direct`
-   - `Custom` 目前主要保留为工作簿兼容/审计路径
+   - `Custom`
 5. 修改正极生产和运输距离参数。
 6. 查看结果表，并在导出页下载结果。
 
@@ -107,6 +109,7 @@ UV_CACHE_DIR=/tmp/uv-cache uv run python scripts/run_scenario.py \
   --preset pack_pyro \
   --preset pack_hydro \
   --preset pack_direct \
+  --preset pack_custom \
   --preset scrap_direct \
   --out-dir scenario_runs \
   --include-parameters
@@ -168,13 +171,13 @@ parameters/*.csv    # 仅在 --include-parameters 时生成
 - `Pyro`：火法回收路线。
 - `Hydro`：湿法回收路线。
 - `Direct`：直接回收路线。
-- `Custom`：自定义/兼容路线。
+- `Custom`：自定义回收路线，使用工作簿 Custom 参数列对应的 Python 计算路径。
 
 注意：`Cell manufacturing cost` 的 recycled route 目前显示为空值。这不是漏算为 0，而是因为原 Excel 在这些 route 上会产生 `#DIV/0!`、`#N/A` 或 `#NAME?`。Python 版本已改为显式空值，避免误导用户把错误路径解释成“成本为 0”。
 
-## 7. 我们是怎么做迁移的
+## 7. Python 实现方式
 
-迁移不是简单读取 Excel 单元格，而是分层把工作簿逻辑移植到 Python。
+本项目不是简单读取 Excel 单元格，而是分层把 EverBatt 模型逻辑实现到 Python。Excel 工作簿主要作为参数来源、参考快照和回归校验对象；日常使用、导出、批量运行和后续客制化应优先走 Python 计算路径。
 
 ### 7.1 工作簿侦察
 
@@ -195,7 +198,7 @@ docs/analysis/vba_olevba.txt
 
 ### 7.2 场景模型 typed 化
 
-Excel 的 `Input` 页被迁移为 typed Python 对象：
+原模型中的输入页语义被整理为 typed Python 对象：
 
 - `Scenario`
 - `FeedstockInput`
@@ -211,9 +214,9 @@ Excel 的 `Input` 页被迁移为 typed Python 对象：
 - CM recovery throughput 语义被拆成 material-flow tonnes、routed tonnes、cost-design tonnes。
 - recycled manufacturing 使用 `RecycledManufacturingParameters` 管理 chemistry、recycled share 和转换因子。
 
-### 7.4 公式模块化迁移
+### 7.4 公式模块化实现
 
-已迁移的主要模块包括：
+已用 Python 实现的主要模块包括：
 
 - Collection and transport
 - Disassembly
@@ -239,8 +242,8 @@ UI 默认隐藏 audit 字段，但测试和开发路径仍能看到。
 原始 Excel 不再是用户侧计算引擎，而是回归 oracle：
 
 - `reporting_snapshots.py` 保留读取 workbook 快照的能力。
-- Python 用户路径优先使用迁移后的公式。
-- 测试中保留 workbook delta，防止迁移过程偏离原模型。
+- Python 用户路径优先使用已实现的公式模块。
+- 测试中保留 workbook delta，防止 Python 实现偏离原模型。
 
 ### 7.6 LibreOffice 矩阵校验
 
@@ -259,7 +262,35 @@ UI 默认隐藏 audit 字段，但测试和开发路径仍能看到。
 docs/analysis/scenario_matrix_comparison.md
 ```
 
-## 8. 迁移之后效果如何
+当前仓库提供可复用对比脚本，默认读取 `/tmp/everbatt_matrix_inputs` 和 `/tmp/everbatt_matrix_recalc`：
+
+```bash
+UV_CACHE_DIR=/tmp/uv-cache uv run python scripts/compare_excel_matrix.py \
+  --out-dir /tmp/recycle_cost_excel_compare \
+  --strict
+```
+
+如需从原始 workbook 重新生成 15 个矩阵输入，并调用 LibreOffice 重算 Excel 场景：
+
+```bash
+UV_CACHE_DIR=/tmp/uv-cache uv run python scripts/compare_excel_matrix.py \
+  --input-dir /tmp/everbatt_matrix_inputs \
+  --recalc-dir /tmp/recycle_cost_recalc_current \
+  --out-dir /tmp/recycle_cost_excel_compare \
+  --generate-inputs \
+  --recalculate \
+  --strict
+```
+
+脚本会输出：
+
+```text
+selected_recycling_compare.csv   # selected-route recycling parity
+output_summary_compare.csv       # Output 汇总区全列诊断
+summary.json
+```
+
+## 8. 当前实现效果
 
 当前全量测试：
 
@@ -299,8 +330,8 @@ selected-route recycling 的矩阵摘要：
 当前仍需注意：
 
 - `recycled manufacturing cost` 路径在 Excel 中本身会输出错误值，因此 Python 当前显示为空。若业务上需要这个值，应新增 Python-only estimate，并明确它不是 Excel parity 值。
-- `Custom` route 仍以兼容/审计为主，作为真实可配置路线还需要进一步定义边界。
-- 部分 output-parity 常量仍在 `reporting.py` / `manufacturing.py` 中，应继续收敛到 typed parameter objects 或参数表。
+- `Custom` route 已可作为完整业务路径运行；当前语义是“使用工作簿 Custom 参数列的自定义路线”，还不是自由增删单元操作、设备和化学品的流程编辑器。
+- output-parity 覆盖值已从 `reporting.py` 收敛到 `output_parity.py` 的 typed keys/accessors；后续仍可继续替换为自动提取的外部参数表。
 - UI 当前主要编辑单一 feedstock stream；底层 `Scenario.feedstocks` 已支持多 stream，后续可以扩展页面输入。
 - 某些详细 audit 表保留 scenario-derived 计算，而 public `Output` summary 为了 Excel parity 会使用 workbook-style 汇总缓存逻辑。
 
@@ -318,6 +349,12 @@ UV_CACHE_DIR=/tmp/uv-cache uv run pytest -q
 UV_CACHE_DIR=/tmp/uv-cache uv run python scripts/analyze_everbatt.py
 ```
 
+运行 Excel 矩阵对比：
+
+```bash
+UV_CACHE_DIR=/tmp/uv-cache uv run python scripts/compare_excel_matrix.py --strict
+```
+
 运行一组常用 CLI 场景：
 
 ```bash
@@ -326,6 +363,7 @@ UV_CACHE_DIR=/tmp/uv-cache uv run python scripts/run_scenario.py \
   --preset pack_pyro \
   --preset pack_hydro \
   --preset pack_direct \
+  --preset pack_custom \
   --preset scrap_direct \
   --out-dir /tmp/everbatt_runs
 ```
@@ -334,7 +372,7 @@ UV_CACHE_DIR=/tmp/uv-cache uv run python scripts/run_scenario.py \
 
 - 用户侧优先使用 Python-calculated tables。
 - workbook snapshots 作为 regression oracle，而不是运行时主计算路径。
-- 新迁移公式需要至少覆盖默认场景测试；如果受用户输入影响，应增加非默认场景测试。
+- 新增或调整公式需要至少覆盖默认场景测试；如果受用户输入影响，应增加非默认场景测试。
 - 已知偏差必须记录在 `docs/analysis/migration_checklist.md` 或 `docs/analysis/scenario_matrix_comparison.md`。
 
 ## 11. 项目结构
@@ -347,9 +385,9 @@ src/recycle_cost/model.py       typed scenario model
 src/recycle_cost/parameters.py  工作簿参数集中读取
 src/recycle_cost/app_services.py UI/导出/场景服务层
 src/recycle_cost/reporting.py   Output/Report 汇总逻辑
-src/recycle_cost/*.py           各 workbook 模块的 Python 迁移
+src/recycle_cost/*.py           各 workbook 模块的 Python 实现
 tests/                          回归测试和场景测试
-docs/analysis/                  迁移分析、清单和 parity 报告
+docs/analysis/                  模型分析、实现清单和 parity 报告
 ```
 
 ## 12. 快速排查
@@ -371,32 +409,45 @@ docs/analysis/                  迁移分析、清单和 parity 报告
 - 原 workbook 对这些 route 的成本公式会返回错误值。
 - Python 版本用空值表示“不可用”，避免误报为 0。
 
-## 13. v0.1.0 发布说明
+## 13. v0.2.0 发布说明
 
-`v0.1.0` 是第一个面向公开展示的迁移版本。
+`v0.2.0` 聚焦可复现校验、Custom 路线业务化和维护性整理。
+
+本版本完成：
+
+- 新增 `scripts/compare_excel_matrix.py`，支持生成 15 个 Excel 矩阵输入、调用 LibreOffice 重算、导出对比 CSV，并用 `--strict` 执行 selected-route parity 校验。
+- `Custom` 回收路线已可作为完整业务路径运行，新增 `pack_custom` 预设，并补齐 CLI/UI 验证、stage summary、Output summary 和 report 输出。
+- selected-route recycling 的 15 场景 Excel parity 继续保持浮点精度一致。
+- output-parity 覆盖值从 `reporting.py` 收敛到 `output_parity.py`，用 typed keys/accessors 集中管理。
+- 项目元信息和 README 使用说明更新。
+- 全量测试扩展到 `107 passed`。
+
+## 14. v0.1.0 发布说明
+
+`v0.1.0` 是第一个面向公开展示的 Python 实现版本。
 
 本版本完成：
 
 - Streamlit 网页端场景配置、结果查看和导出。
 - CLI 批量场景运行与 CSV/JSON 导出。
-- 回收流程、材料转换、正极生产、制造成本和输出汇总的主要 Python 迁移。
-- cell/pack manufacturing cost 从 workbook 摘要单元格迁移为 Python 公式路径。
+- 回收流程、材料转换、正极生产、制造成本和输出汇总的主要 Python 公式实现。
+- cell/pack manufacturing cost 从 workbook 摘要单元格整理为 Python 公式路径。
 - 15 组 LibreOffice 重算场景矩阵对比。
 - 默认和多场景回归测试。
 
 适合发布时使用的英文简介：
 
 ```text
-recycle-cost is a Python/Streamlit migration of the EverBatt battery recycling cost model. It turns an Excel-based model into a testable, auditable, and batch-runnable tool for comparing Pyro, Hydro, and Direct recycling routes across cost, revenue, energy, water, and GHG metrics. The project keeps the original workbook as a regression oracle while moving user-facing calculations into typed Python models and formula modules.
+recycle-cost is a Python/Streamlit implementation of the EverBatt battery recycling cost model. It provides testable, auditable, batch-runnable Python formula modules for comparing Pyro, Hydro, Direct, and Custom recycling routes across cost, revenue, energy, water, and GHG metrics. The project keeps the original workbook as a parameter reference and regression oracle while making the user-facing model customizable beyond Excel.
 ```
 
 适合发布时使用的中文简介：
 
 ```text
-recycle-cost 是 EverBatt 电池回收成本模型的 Python/Streamlit 迁移版本。它把原本依赖 Excel 的回收经济性、材料价值、正极生产、电芯与电池包制造、能耗、水耗和温室气体排放计算，迁移为可测试、可审计、可批量运行的 Python 工具，同时保留原工作簿作为回归校验基准。
+recycle-cost 是 EverBatt 电池回收成本模型的 Python/Streamlit 实现。它把回收经济性、材料价值、正极生产、电芯与电池包制造、能耗、水耗和温室气体排放计算整理为可测试、可审计、可批量运行、可进一步客制化的 Python 工具，同时保留原工作簿作为参数参考和回归校验基准。
 ```
 
-## 14. License / 版权
+## 15. License / 版权
 
 本项目代码以 MIT License 发布，详见 [LICENSE](LICENSE)。
 
@@ -404,4 +455,4 @@ recycle-cost 是 EverBatt 电池回收成本模型的 Python/Streamlit 迁移版
 Copyright (c) 2026 zhouzhq2021
 ```
 
-本项目是对 EverBatt 2023 工作簿模型的 Python/Streamlit 迁移与复现。原始 EverBatt 模型、工作簿、数据、商标和相关名称的版权归其原始作者或机构所有。本仓库不声称拥有原始 EverBatt 模型的版权；本仓库的版权范围仅覆盖本项目中新编写的 Python 代码、测试、脚本、文档和迁移实现。
+本项目是对 EverBatt 电池回收成本模型的 Python/Streamlit 实现与工程化整理。原始 EverBatt 模型、工作簿、数据、商标和相关名称的版权归其原始作者或机构所有。本仓库不声称拥有原始 EverBatt 模型的版权；本仓库的版权范围仅覆盖本项目中新编写的 Python 代码、测试、脚本、文档和实现工作。
