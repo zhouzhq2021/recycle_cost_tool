@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import altair as alt
+import math
 import pandas as pd
 import streamlit as st
 
@@ -18,6 +19,48 @@ from .preprocessing import preprocessing_throughput
 
 DEFAULT_TABLE_HEIGHT = 300
 COMPACT_TABLE_HEIGHT = 210
+
+PROCESS_LABELS = {
+    "Pyro": "Pyro",
+    "Hydro": "Hydro",
+    "Direct": "Direct",
+    "Custom": "Custom",
+}
+
+
+def format_report_number(value) -> str:
+    try:
+        if value is None or pd.isna(value):
+            return ""
+    except (TypeError, ValueError):
+        pass
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return str(value)
+    if not math.isfinite(float(value)):
+        return ""
+    value = float(value)
+    abs_value = abs(value)
+    if abs_value == 0:
+        return "0.0000"
+    if abs_value < 1:
+        return f"{value:,.6f}"
+    if abs_value < 100:
+        return f"{value:,.4f}"
+    return f"{value:,.2f}"
+
+
+def format_report_table(data: pd.DataFrame) -> pd.DataFrame:
+    table = data.copy()
+    for column in table.columns:
+        if pd.api.types.is_numeric_dtype(table[column]):
+            table[column] = table[column].map(format_report_number)
+    return table
+
+
+def render_report_table(title: str | None, data: pd.DataFrame, *, height: int = DEFAULT_TABLE_HEIGHT) -> None:
+    if title:
+        st.markdown(f"**{title}**")
+    st.dataframe(format_report_table(data), width="stretch", height=height, hide_index=True, row_height=34)
 
 
 def render_table(title: str | None, data: pd.DataFrame, text, user_table, *, height: int = DEFAULT_TABLE_HEIGHT) -> None:
@@ -114,6 +157,164 @@ def render_overview_section(
         text,
         user_table,
     )
+
+
+def render_branch_report_section(scenario, result_tables, branch: str, process_key: str, text, user_table) -> None:
+    output_summary = result_tables["output_summary"]
+    stage_summary = result_tables["stage_summary"]
+    manufacturing_summary = result_tables["manufacturing_summary"]
+    report_results = result_tables["report_results"]
+    process_stage = result_tables["process_stage"]
+    cost_breakdown = result_tables["cost_breakdown"]
+    recycling_revenue = result_tables["recycling_revenue"]
+    active_process = process_key if process_key in PROCESS_LABELS else "Hydro"
+
+    _render_report_header(scenario, branch, active_process, text)
+    if branch == "production":
+        _render_production_report(output_summary, manufacturing_summary, report_results, text)
+    else:
+        _render_recycling_report(output_summary, stage_summary, process_stage, cost_breakdown, recycling_revenue, report_results, active_process, text)
+    _render_complete_report_tables(result_tables, text)
+
+
+def _render_report_header(scenario, branch: str, process_key: str, text) -> None:
+    cols = st.columns(4)
+    cols[0].metric(text["selected_branch"], text["normal_preparation"] if branch == "production" else text["battery_recycling"])
+    cols[1].metric(text["cathode_chemistry"], scenario.cathode_chemistry)
+    cols[2].metric(text["manufacturing_location"], scenario.manufacturing_location)
+    cols[3].metric(text["recycling_process"], process_key if branch == "recycling" else text["not_applicable"])
+    st.caption(text["report_precision_hint"])
+
+
+def _render_production_report(output_summary, manufacturing_summary, report_results, text) -> None:
+    output_index = output_summary.set_index("metric")
+    kpi_cols = st.columns(4)
+    kpi_cols[0].metric(text["cell_cost"], f"{output_index.loc['Cell manufacturing cost', 'Virgin']:.2f} $/kWh")
+    kpi_cols[1].metric(text["virgin_energy"], f"{output_index.loc['Cell manufacturing total energy', 'Virgin']:.2f} MJ/kWh")
+    kpi_cols[2].metric(text["water"], f"{output_index.loc['Cell manufacturing water', 'Virgin']:.2f} gal/kWh")
+    kpi_cols[3].metric("GHGs", f"{output_index.loc['Cell manufacturing GHGs', 'Virgin']:,.2f} g CO2e/kWh")
+
+    report_table = report_results[report_results["section"] == "Manufacturing"][
+        ["metric", "Virgin Manufacture", "Pyro", "Hydro", "Direct", "Custom"]
+    ]
+    output_table = output_summary[
+        output_summary["metric"].astype(str).str.startswith("Cell manufacturing")
+    ][["metric", "category", "unit", "Virgin", "Pyro", "Hydro", "Direct", "Custom"]]
+    manufacturing_columns = [
+        "metric",
+        "python_virgin_cell",
+        "python_virgin_pack",
+        "python_recycled_pyro",
+        "python_recycled_hydro",
+        "python_recycled_direct",
+        "python_recycled_custom",
+    ]
+    manufacturing_table = manufacturing_summary[[column for column in manufacturing_columns if column in manufacturing_summary.columns]]
+
+    tab_report, tab_output, tab_manufacturing = st.tabs(
+        [text["report_sheet_summary"], text["output_summary"], text["manufacturing_summary"]]
+    )
+    with tab_report:
+        render_report_table(text["production_report"], report_table)
+    with tab_output:
+        render_report_table(text["production_output_summary"], output_table)
+    with tab_manufacturing:
+        render_report_table(text["manufacturing_summary"], manufacturing_table, height=420)
+
+
+def _render_recycling_report(
+    output_summary,
+    stage_summary,
+    process_stage,
+    cost_breakdown,
+    recycling_revenue,
+    report_results,
+    active_process: str,
+    text,
+) -> None:
+    output_index = output_summary.set_index("metric")
+    kpi_cols = st.columns(4)
+    kpi_cols[0].metric(text["recycling_process"], active_process)
+    kpi_cols[1].metric(text["cost"], f"{output_index.loc['Recycling cost', active_process]:.4f} $/kg")
+    kpi_cols[2].metric(text["revenue"], f"{output_index.loc['Recycling revenue', active_process]:.4f} $/kg")
+    kpi_cols[3].metric("GHGs", f"{output_index.loc['Recycling GHGs', active_process]:,.2f} g CO2e/kg")
+
+    stage_table = stage_summary[
+        stage_summary["stage"].isin(
+            ["Collection & Transport", "Disassembly", "Preprocessing", "CM Recovery", "Material Conversion", "Cathode Production"]
+        )
+    ]
+    process_stage_table = process_stage[
+        process_stage["stage"].isin(["Collection & Transport", "Disassembly", "Recycle", "Cathode Production"])
+        & process_stage["column"].isin(["total", active_process, "Direct regeneration"])
+    ]
+    cost_table = cost_breakdown[
+        (
+            cost_breakdown["section"].isin(["Recycling cost", "Cathode production cost"])
+            & cost_breakdown["column"].isin(["Selected", active_process])
+        )
+        | (
+            cost_breakdown["section"].eq("Battery production cost")
+            & cost_breakdown["column"].isin(["Selected", f"recycled materials from {active_process.lower()}"])
+        )
+    ]
+    revenue_table = recycling_revenue[recycling_revenue["process"].eq(active_process)]
+    closed_loop_report = report_results[report_results["section"].eq("Closed loop")][["metric", "Pyro", "Hydro", "Direct", "Custom"]]
+    recycling_output = output_summary[
+        output_summary["metric"].astype(str).str.startswith(("Recycling", "Collection"))
+    ][["metric", "category", "unit", "Virgin", "Pyro", "Hydro", "Direct", "Custom"]]
+
+    tab_report, tab_stage, tab_cost, tab_revenue, tab_output = st.tabs(
+        [
+            text["report_sheet_summary"],
+            text["stage_summary"],
+            text["cost_breakdown"],
+            text["recycling_revenue"],
+            text["output_summary"],
+        ]
+    )
+    with tab_report:
+        render_report_table(text["recycling_report"], closed_loop_report)
+    with tab_stage:
+        render_report_table(text["stage_summary"], stage_table, height=360)
+        with st.expander(text["process_stage_details"], expanded=False):
+            render_report_table(None, process_stage_table, height=420)
+    with tab_cost:
+        render_report_table(text["cost_breakdown"], cost_table, height=420)
+    with tab_revenue:
+        if revenue_table.empty:
+            st.info(text["no_recycling_revenue"])
+        else:
+            render_report_table(text["recycling_revenue"], revenue_table, height=360)
+    with tab_output:
+        render_report_table(text["recycling_output_summary"], recycling_output)
+
+
+def _render_complete_report_tables(result_tables, text) -> None:
+    with st.expander(text["complete_excel_report_tables"], expanded=False):
+        tabs = st.tabs(
+            [
+                text["output_summary"],
+                text["stage_summary"],
+                text["process_stage_details"],
+                text["cost_breakdown"],
+                text["recycling_revenue"],
+                text["manufacturing_summary"],
+                text["report_results"],
+            ]
+        )
+        table_keys = [
+            "output_summary",
+            "stage_summary",
+            "process_stage",
+            "cost_breakdown",
+            "recycling_revenue",
+            "manufacturing_summary",
+            "report_results",
+        ]
+        for tab, key in zip(tabs, table_keys, strict=True):
+            with tab:
+                render_report_table(None, result_tables[key], height=460)
 
 
 def render_transport_section(transport_breakdown, transport_env, text, user_table):

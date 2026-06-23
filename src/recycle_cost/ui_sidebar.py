@@ -4,17 +4,13 @@ from dataclasses import dataclass
 
 import streamlit as st
 
-from .app_services import (
-    fraction_float,
-    nonnegative_float,
-    option_index,
-    recycling_process_key,
-    scenario_defaults_from_json_bytes,
-    scenario_from_inputs,
-    scenario_validation_messages,
-)
-from .i18n import SIDEBAR_TAB_LABELS, TEXT
-from .model import SCENARIO_PRESETS, Scenario, ScenarioOptions
+from .app_services import fraction_float, nonnegative_float, recycling_process_key, scenario_from_inputs
+from .i18n import TEXT
+from .model import SCENARIO_PRESETS, Scenario
+
+
+PAGE_KEYS = ("home", "global_parameters", "branch_select", "branch_parameters", "branch_flow", "module", "results")
+BRANCH_KEYS = ("production", "recycling")
 
 
 @dataclass(frozen=True)
@@ -22,200 +18,182 @@ class SidebarState:
     scenario: Scenario
     process: str | None
     text: dict[str, str]
+    page: str
+    branch: str | None
 
 
-def render_sidebar(default_base: Scenario, options: ScenarioOptions) -> SidebarState:
+def render_sidebar(default_base: Scenario, options) -> SidebarState:
+    _ensure_app_state(default_base)
     with st.sidebar:
         language_choice = st.radio("语言 / Language", ["中文", "English"], horizontal=True)
         lang = "zh" if language_choice == "中文" else "en"
         text = TEXT[lang]
-        scenario_tab, production_tab, feedstock_tab, transport_tab = st.tabs(SIDEBAR_TAB_LABELS[lang])
+        st.divider()
+        _render_workflow_nav(text)
+        st.divider()
+        _render_sidebar_summary(text)
 
-        with scenario_tab:
-            preset_labels = {key: text[value["label_key"]] for key, value in SCENARIO_PRESETS.items()}
-            preset_key = st.selectbox(
-                text["preset"],
-                list(SCENARIO_PRESETS),
-                format_func=lambda key: preset_labels[key],
-                index=0,
-            )
-            preset = SCENARIO_PRESETS[preset_key]
-            defaults = dict(preset)
-            control_key = preset_key
-            uploaded_scenario = st.file_uploader(
-                text["scenario_file"],
-                type=["json"],
-                help=text["scenario_file_help"],
-            )
-            if uploaded_scenario is not None:
-                try:
-                    uploaded_bytes = uploaded_scenario.getvalue()
-                    defaults = scenario_defaults_from_json_bytes(uploaded_bytes, preset)
-                    control_key = f"{preset_key}_upload_{abs(hash(uploaded_bytes))}"
-                    st.success(text["scenario_loaded"])
-                except (UnicodeDecodeError, ValueError):
-                    st.warning(text["scenario_invalid"])
+    scenario = scenario_from_inputs(**st.session_state.scenario_values)
+    process = recycling_process_key(scenario.recycling_process)
+    return SidebarState(
+        scenario=scenario,
+        process=process,
+        text=text,
+        page=st.session_state.page,
+        branch=st.session_state.branch,
+    )
 
-        with production_tab:
-            st.markdown(f"**{text['manufacturing']}**")
-            battery_manufactured = st.selectbox(
-                text["battery_manufactured"],
-                options.battery_manufactured,
-                index=option_index(options.battery_manufactured, str(defaults["battery_manufactured"])),
-                key=f"{control_key}_battery_manufactured",
-            )
-            throughput = st.number_input(
-                text["throughput"],
-                min_value=0.0,
-                value=nonnegative_float(defaults["throughput"]),
-                key=f"{control_key}_throughput",
-            )
-            manufacturing_chemistry = st.selectbox(
-                text["manufacturing_chemistry"],
-                options.chemistries,
-                index=option_index(options.chemistries, str(defaults["manufacturing_chemistry"])),
-                key=f"{control_key}_manufacturing_chemistry",
-            )
-            manufacturing_location = st.selectbox(
-                text["manufacturing_location"],
-                options.locations,
-                index=option_index(options.locations, str(defaults["manufacturing_location"])),
-                key=f"{control_key}_manufacturing_location",
-            )
 
-            st.markdown(f"**{text['cathode']}**")
-            cathode_chemistry = st.selectbox(
-                text["cathode_chemistry"],
-                options.cathode_chemistries,
-                index=option_index(options.cathode_chemistries, str(defaults["cathode_chemistry"])),
-                key=f"{control_key}_cathode_chemistry",
-            )
-            cathode_throughput = st.number_input(
-                text["cathode_throughput"],
-                min_value=0.0,
-                value=nonnegative_float(defaults["cathode_throughput"]),
-                key=f"{control_key}_cathode_throughput",
-            )
-            recycled_content = st.number_input(
-                text["recycled_content"],
-                min_value=0.0,
-                max_value=1.0,
-                step=0.05,
-                value=fraction_float(defaults["recycled_content"]),
-                key=f"{control_key}_recycled_content",
-            )
+def set_page(page: str, *, module: str | None = None, return_page: str | None = None) -> None:
+    st.session_state.page = page
+    if module is not None:
+        st.session_state.active_module = module
+    if return_page is not None:
+        st.session_state.module_return_page = return_page
+    st.rerun()
 
-        with feedstock_tab:
-            st.markdown(f"**{text['feedstock']}**")
-            battery_collected = st.selectbox(
-                text["battery_collected"],
-                options.battery_collected,
-                index=option_index(options.battery_collected, str(defaults["battery_collected"])),
-                key=f"{control_key}_battery_collected",
-            )
-            feedstock_chemistry = st.selectbox(
-                text["feedstock_chemistry"],
-                options.chemistries,
-                index=option_index(options.chemistries, str(defaults["feedstock_chemistry"])),
-                key=f"{control_key}_feedstock_chemistry",
-            )
-            feedstock_type = st.selectbox(
-                text["feedstock_type"],
-                options.feedstock_types,
-                index=option_index(options.feedstock_types, str(defaults["feedstock_type"])),
-                key=f"{control_key}_feedstock_type",
-            )
-            feedstock_tonnes = st.number_input(
-                text["feedstock_tonnes"],
-                min_value=0.0,
-                value=nonnegative_float(defaults["feedstock_tonnes"]),
-                key=f"{control_key}_feedstock_tonnes",
-            )
 
-            st.markdown(f"**{text['recycling_process']}**")
-            recycling_process = st.selectbox(
-                text["recycling_process"],
-                options.recycling_processes,
-                index=option_index(options.recycling_processes, str(defaults["recycling_process"])),
-                key=f"{control_key}_recycling_process",
-            )
+def set_branch(branch: str | None) -> None:
+    st.session_state.branch = branch if branch in BRANCH_KEYS else None
+    st.session_state.active_branch_parameter_section = None
+    st.session_state.calculation_done = False
+    st.session_state.page = "branch_parameters" if st.session_state.branch else "branch_select"
+    st.rerun()
 
-        with transport_tab:
-            d = default_base.transport_distances
-            collection_to_disassembly = st.number_input(
-                text["collection_to_disassembly"],
-                min_value=0.0,
-                value=nonnegative_float(defaults.get("collection_to_disassembly"), d.collection_to_disassembly),
-                key=f"{control_key}_collection_to_disassembly",
-            )
-            disassembly_to_preprocessor = st.number_input(
-                text["disassembly_to_preprocessor"],
-                min_value=0.0,
-                value=nonnegative_float(defaults.get("disassembly_to_preprocessor"), d.disassembly_to_preprocessor),
-                key=f"{control_key}_disassembly_to_preprocessor",
-            )
-            preprocessor_to_cm_recovery = st.number_input(
-                text["preprocessor_to_cm"],
-                min_value=0.0,
-                value=nonnegative_float(defaults.get("preprocessor_to_cm_recovery"), d.preprocessor_to_cm_recovery),
-                key=f"{control_key}_preprocessor_to_cm_recovery",
-            )
-            manufacturer_to_preprocessor = st.number_input(
-                text["manufacturer_to_preprocessor"],
-                min_value=0.0,
-                value=nonnegative_float(
-                    defaults.get("manufacturer_to_preprocessor_or_cm_recovery"),
-                    d.manufacturer_to_preprocessor_or_cm_recovery,
-                ),
-                key=f"{control_key}_manufacturer_to_preprocessor",
-            )
-            recycler_to_cathode = st.number_input(
-                text["recycler_to_cathode"],
-                min_value=0.0,
-                value=nonnegative_float(defaults.get("recycler_to_cathode_producer"), d.recycler_to_cathode_producer),
-                key=f"{control_key}_recycler_to_cathode",
-            )
-            cathode_to_manufacturer = st.number_input(
-                text["cathode_to_manufacturer"],
-                min_value=0.0,
-                value=nonnegative_float(
-                    defaults.get("cathode_producer_to_manufacturer"),
-                    d.cathode_producer_to_manufacturer,
-                ),
-                key=f"{control_key}_cathode_to_manufacturer",
-            )
 
-        scenario = scenario_from_inputs(
-            battery_manufactured=battery_manufactured,
-            throughput_gwh_per_year=throughput,
-            manufacturing_chemistry=manufacturing_chemistry,
-            manufacturing_location=manufacturing_location,
-            battery_collected=battery_collected,
-            feedstock_chemistry=feedstock_chemistry,
-            feedstock_type=feedstock_type,
-            feedstock_tonnes_per_year=feedstock_tonnes,
-            recycling_process=recycling_process,
-            cathode_chemistry=cathode_chemistry,
-            recycled_content=recycled_content,
-            cathode_throughput_gwh_per_year=cathode_throughput,
-            collection_to_disassembly=collection_to_disassembly,
-            disassembly_to_preprocessor=disassembly_to_preprocessor,
-            preprocessor_to_cm_recovery=preprocessor_to_cm_recovery,
-            manufacturer_to_preprocessor_or_cm_recovery=manufacturer_to_preprocessor,
-            recycler_to_cathode_producer=recycler_to_cathode,
-            cathode_producer_to_manufacturer=cathode_to_manufacturer,
+def run_calculation() -> None:
+    if st.session_state.get("branch") not in BRANCH_KEYS:
+        st.session_state.calculation_done = False
+        st.session_state.page = "branch_select"
+    else:
+        st.session_state.calculation_done = True
+        st.session_state.page = "results"
+    st.rerun()
+
+
+def set_scenario_values(values: dict[str, object]) -> None:
+    if values != st.session_state.scenario_values:
+        st.session_state.calculation_done = False
+    st.session_state.scenario_values = dict(values)
+
+
+def preset_values(default_base: Scenario, preset_key: str) -> dict[str, object]:
+    preset = SCENARIO_PRESETS[preset_key]
+    distances = default_base.transport_distances
+    return {
+        "battery_manufactured": str(preset["battery_manufactured"]),
+        "throughput_gwh_per_year": nonnegative_float(preset["throughput"]),
+        "manufacturing_chemistry": str(preset["manufacturing_chemistry"]),
+        "manufacturing_location": str(preset["manufacturing_location"]),
+        "battery_collected": str(preset["battery_collected"]),
+        "feedstock_chemistry": str(preset["feedstock_chemistry"]),
+        "feedstock_type": str(preset["feedstock_type"]),
+        "feedstock_tonnes_per_year": nonnegative_float(preset["feedstock_tonnes"]),
+        "recycling_process": str(preset["recycling_process"]),
+        "cathode_chemistry": str(preset["cathode_chemistry"]),
+        "recycled_content": fraction_float(preset["recycled_content"]),
+        "cathode_throughput_gwh_per_year": nonnegative_float(preset["cathode_throughput"]),
+        "collection_to_disassembly": distances.collection_to_disassembly,
+        "disassembly_to_preprocessor": distances.disassembly_to_preprocessor,
+        "preprocessor_to_cm_recovery": distances.preprocessor_to_cm_recovery,
+        "manufacturer_to_preprocessor_or_cm_recovery": distances.manufacturer_to_preprocessor_or_cm_recovery,
+        "recycler_to_cathode_producer": distances.recycler_to_cathode_producer,
+        "cathode_producer_to_manufacturer": distances.cathode_producer_to_manufacturer,
+    }
+
+
+def scenario_values_from_record(record: dict[str, object], default_base: Scenario) -> dict[str, object]:
+    values = preset_values(default_base, "default")
+    for key in values:
+        if key in record and record[key] is not None:
+            values[key] = record[key]
+    feedstocks = record.get("feedstocks")
+    if isinstance(feedstocks, list) and feedstocks and isinstance(feedstocks[0], dict):
+        first = feedstocks[0]
+        values["feedstock_chemistry"] = first.get("chemistry", values["feedstock_chemistry"])
+        values["feedstock_type"] = first.get("feedstock_type", values["feedstock_type"])
+        values["feedstock_tonnes_per_year"] = first.get("tonnes_per_year", values["feedstock_tonnes_per_year"])
+    return _clean_values(values)
+
+
+def _ensure_app_state(default_base: Scenario) -> None:
+    if "scenario_values" not in st.session_state:
+        st.session_state.scenario_values = preset_values(default_base, "default")
+    if "preset_key" not in st.session_state:
+        st.session_state.preset_key = "default"
+    if "page" not in st.session_state or st.session_state.page not in PAGE_KEYS:
+        st.session_state.page = "home"
+    if "branch" not in st.session_state or st.session_state.branch not in (*BRANCH_KEYS, None):
+        st.session_state.branch = None
+    if "module_return_page" not in st.session_state:
+        st.session_state.module_return_page = "branch_flow"
+    if "active_branch_parameter_section" not in st.session_state:
+        st.session_state.active_branch_parameter_section = None
+    if "calculation_done" not in st.session_state:
+        st.session_state.calculation_done = False
+
+
+def _clean_values(values: dict[str, object]) -> dict[str, object]:
+    numeric_keys = {
+        "throughput_gwh_per_year",
+        "feedstock_tonnes_per_year",
+        "recycled_content",
+        "cathode_throughput_gwh_per_year",
+        "collection_to_disassembly",
+        "disassembly_to_preprocessor",
+        "preprocessor_to_cm_recovery",
+        "manufacturer_to_preprocessor_or_cm_recovery",
+        "recycler_to_cathode_producer",
+        "cathode_producer_to_manufacturer",
+    }
+    cleaned = dict(values)
+    for key in numeric_keys:
+        cleaned[key] = fraction_float(cleaned.get(key)) if key == "recycled_content" else nonnegative_float(cleaned.get(key))
+    return cleaned
+
+
+def _render_workflow_nav(text: dict[str, str]) -> None:
+    st.caption(text["workflow"])
+    steps = [("home", text["start"]), ("global_parameters", text["global_parameters"]), ("branch_select", text["select_branch"])]
+    if st.session_state.branch == "production":
+        steps.extend(
+            [
+                ("branch_parameters", text["production_branch_parameters"]),
+                ("branch_flow", text["normal_preparation"]),
+                ("results", text["production_report"]),
+            ]
         )
-        process = recycling_process_key(scenario.recycling_process)
-        validation_messages = scenario_validation_messages(scenario, text)
+    elif st.session_state.branch == "recycling":
+        steps.extend(
+            [
+                ("branch_parameters", text["recycling_branch_parameters"]),
+                ("branch_flow", text["battery_recycling"]),
+                ("results", text["recycling_report"]),
+            ]
+        )
+    for page, label in steps:
+        disabled = page in {"branch_parameters", "branch_flow", "results"} and st.session_state.branch is None
+        button_type = "primary" if st.session_state.page == page else "secondary"
+        if st.button(label, key=f"nav_{page}_{st.session_state.branch}", type=button_type, disabled=disabled, width="stretch"):
+            set_page(page)
+    if st.session_state.branch:
+        if st.button(text["change_branch"], key="change_branch", width="stretch"):
+            st.session_state.branch = None
+            st.session_state.active_branch_parameter_section = None
+            st.session_state.calculation_done = False
+            set_page("branch_select")
 
-        with st.expander(text["validation"], expanded=bool(validation_messages)):
-            if validation_messages:
-                for level, message in validation_messages:
-                    if level == "warning":
-                        st.warning(message)
-                    else:
-                        st.info(message)
-            else:
-                st.success(text["scenario_ready"])
 
-    return SidebarState(scenario=scenario, process=process, text=text)
+def _render_sidebar_summary(text: dict[str, str]) -> None:
+    values = st.session_state.scenario_values
+    branch = st.session_state.branch
+    branch_label = text["normal_preparation"] if branch == "production" else text["battery_recycling"] if branch == "recycling" else text["not_selected"]
+    st.caption(text["current_scenario"])
+    st.write(f"{text['selected_branch']}: **{branch_label}**")
+    st.write(f"{text['cathode_chemistry']}: **{values['cathode_chemistry']}**")
+    st.write(f"{text['feedstock_chemistry']}: **{values['feedstock_chemistry']}**")
+    st.write(f"{text['manufacturing_location']}: **{values['manufacturing_location']}**")
+    if st.session_state.get("calculation_done", False):
+        st.success(text["calculation_done"])
+    else:
+        st.info(text["calculation_pending"])

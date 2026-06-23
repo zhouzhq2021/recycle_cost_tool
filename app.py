@@ -6,6 +6,7 @@ from recycle_cost.extractors import available_reference_tables
 from recycle_cost.model import default_scenario, scenario_options
 from recycle_cost.ui_pages import render_app_pages
 from recycle_cost.ui_sidebar import render_sidebar
+from recycle_cost.ui_style import apply_layout_style
 
 
 st.set_page_config(
@@ -13,6 +14,8 @@ st.set_page_config(
     page_icon="",
     layout="wide",
 )
+
+apply_layout_style()
 
 
 @st.cache_data(show_spinner=False)
@@ -34,4 +37,4 @@ default_base = cached_default_scenario()
 options = cached_scenario_options()
 
 sidebar = render_sidebar(default_base, options)
-render_app_pages(sidebar.scenario, sidebar.process, sidebar.text, cached_reference_tables())
+render_app_pages(sidebar.scenario, sidebar.process, sidebar.text, cached_reference_tables(), sidebar.page, default_base, options)
