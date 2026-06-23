@@ -112,6 +112,72 @@ def production_report_summary_table(output_summary: pd.DataFrame) -> pd.DataFram
     return pd.DataFrame(rows, columns=["metric", "Virgin", "unit"])
 
 
+def model_benchmark_policy_table(is_new_flow: bool) -> pd.DataFrame:
+    if is_new_flow:
+        rows = [
+            ("Benchmark target", "Secondary-developed new flow; values are not expected to match legacy Excel exactly."),
+            ("Validation basis", "Mass balance, non-negative outputs, route-specific product direction, and transparent assumptions."),
+            ("Legacy comparison", "Used as a reference scenario to explain changes, not as a forced numerical target."),
+            ("Interpretation", "Differences from legacy flow are acceptable when driven by new preprocessing or downstream route assumptions."),
+        ]
+    else:
+        rows = [
+            ("Benchmark target", "Legacy EverBatt flow aligned with the original Excel/manual structure."),
+            ("Validation basis", "Excel parity, non-negative outputs, and stable report coverage."),
+            ("Legacy comparison", "Current route should remain close to workbook-calibrated behavior for unchanged assumptions."),
+            ("Interpretation", "Large deviations from legacy Excel require a traceable parameter or model change."),
+        ]
+    return pd.DataFrame(rows, columns=["item", "policy"])
+
+
+def model_benchmark_diagnostics_table(output_summary: pd.DataFrame, active_process: str, is_new_flow: bool) -> pd.DataFrame:
+    output_index = output_summary.set_index("metric")
+    checks = [
+        (
+            "Selected route cost is non-negative",
+            _output_metric_value(output_index, "Recycling cost", active_process) >= 0,
+            "Cost can differ from legacy when process assumptions change.",
+        ),
+        (
+            "Selected route revenue is non-negative",
+            _output_metric_value(output_index, "Recycling revenue", active_process) >= 0,
+            "Revenue follows recovered product slate and prices.",
+        ),
+        (
+            "Selected route GHGs are non-negative",
+            _output_metric_value(output_index, "Recycling GHGs", active_process) >= 0,
+            "Environmental output should remain physically interpretable.",
+        ),
+        (
+            "Selected route energy is non-negative",
+            _output_metric_value(output_index, "Recycling total energy", active_process) >= 0,
+            "Energy demand should not be forced to legacy values.",
+        ),
+        (
+            "Selected route water is non-negative",
+            _output_metric_value(output_index, "Recycling water", active_process) >= 0,
+            "Water use reflects the modeled route assumptions.",
+        ),
+    ]
+    if is_new_flow:
+        checks.append(
+            (
+                "New-flow benchmark does not require legacy-value equality",
+                True,
+                "Validate mass-flow logic, non-negativity, product direction, and assumption traceability.",
+            )
+        )
+    rows = [
+        {
+            "check": name,
+            "status": "Pass" if passed else "Review",
+            "note": note,
+        }
+        for name, passed, note in checks
+    ]
+    return pd.DataFrame(rows)
+
+
 def _output_metric_value(output_index: pd.DataFrame, metric: str, column: str) -> float:
     try:
         value = output_index.loc[metric, column]
@@ -263,6 +329,12 @@ def render_branch_report_section(scenario, result_tables, branch: str, process_k
     active_process = process_key if process_key in PROCESS_LABELS else "Hydro"
 
     _render_report_header(scenario, branch, active_process, text)
+    is_new_flow = getattr(scenario, "recycling_flow_variant", "old") == "new"
+    benchmark_policy = model_benchmark_policy_table(is_new_flow)
+    benchmark_diagnostics = model_benchmark_diagnostics_table(output_summary, active_process, is_new_flow)
+    with st.expander(text["model_benchmark_policy"], expanded=False):
+        render_table(None, benchmark_policy, text, user_table, height=220)
+        render_table(text["model_benchmark_diagnostics"], benchmark_diagnostics, text, user_table, height=260)
     if branch == "production":
         _render_production_report(output_summary, manufacturing_summary, report_results, text)
     else:

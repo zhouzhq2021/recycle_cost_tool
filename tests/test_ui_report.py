@@ -3,6 +3,8 @@ import pandas as pd
 from recycle_cost.ui_sections import (
     format_report_number,
     format_report_table,
+    model_benchmark_policy_table,
+    model_benchmark_diagnostics_table,
     production_report_summary_table,
     recycling_report_summary_table,
     recycling_route_comparison_table,
@@ -73,3 +75,27 @@ def test_production_report_summary_table_extracts_virgin_metrics():
 
     assert summary.loc["Cell manufacturing cost", "Virgin"] == 101.0
     assert summary.loc["Cell manufacturing GHGs", "unit"] == "g CO2e/kWh"
+
+
+def test_new_flow_benchmark_policy_does_not_require_legacy_excel_match():
+    policy = model_benchmark_policy_table(is_new_flow=True).set_index("item")
+
+    assert "not expected to match legacy Excel exactly" in policy.loc["Benchmark target", "policy"]
+    assert "Mass balance" in policy.loc["Validation basis", "policy"]
+
+
+def test_new_flow_benchmark_diagnostics_focus_on_interpretability_not_legacy_equality():
+    output = pd.DataFrame(
+        [
+            {"metric": "Recycling cost", "Hydro": 10.0},
+            {"metric": "Recycling revenue", "Hydro": 2.0},
+            {"metric": "Recycling GHGs", "Hydro": 30.0},
+            {"metric": "Recycling total energy", "Hydro": 4.0},
+            {"metric": "Recycling water", "Hydro": 0.5},
+        ]
+    )
+
+    diagnostics = model_benchmark_diagnostics_table(output, "Hydro", is_new_flow=True)
+
+    assert set(diagnostics["status"]) == {"Pass"}
+    assert diagnostics["check"].str.contains("does not require legacy-value equality").any()
