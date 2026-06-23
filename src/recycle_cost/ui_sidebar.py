@@ -74,7 +74,9 @@ def run_calculation() -> None:
 def set_scenario_values(values: dict[str, object]) -> None:
     if values != st.session_state.scenario_values:
         st.session_state.calculation_done = False
-    st.session_state.scenario_values = dict(values)
+    merged = dict(values)
+    merged.setdefault("recycling_flow_variant", st.session_state.get("recycling_flow_variant", "old"))
+    st.session_state.scenario_values = merged
 
 
 def preset_values(default_base: Scenario, preset_key: str) -> dict[str, object]:
@@ -90,6 +92,7 @@ def preset_values(default_base: Scenario, preset_key: str) -> dict[str, object]:
         "feedstock_type": str(preset["feedstock_type"]),
         "feedstock_tonnes_per_year": nonnegative_float(preset["feedstock_tonnes"]),
         "recycling_process": str(preset["recycling_process"]),
+        "recycling_flow_variant": "old",
         "cathode_chemistry": str(preset["cathode_chemistry"]),
         "recycled_content": fraction_float(preset["recycled_content"]),
         "cathode_throughput_gwh_per_year": nonnegative_float(preset["cathode_throughput"]),
@@ -129,8 +132,11 @@ def _ensure_app_state(default_base: Scenario) -> None:
         st.session_state.module_return_page = "branch_flow"
     if "active_branch_parameter_section" not in st.session_state:
         st.session_state.active_branch_parameter_section = None
+    if "recycling_flow_variant" not in st.session_state:
+        st.session_state.recycling_flow_variant = "old"
     if "calculation_done" not in st.session_state:
         st.session_state.calculation_done = False
+    st.session_state.scenario_values["recycling_flow_variant"] = st.session_state.recycling_flow_variant
 
 
 def _clean_values(values: dict[str, object]) -> dict[str, object]:
@@ -190,6 +196,9 @@ def _render_sidebar_summary(text: dict[str, str]) -> None:
     branch_label = text["normal_preparation"] if branch == "production" else text["battery_recycling"] if branch == "recycling" else text["not_selected"]
     st.caption(text["current_scenario"])
     st.write(f"{text['selected_branch']}: **{branch_label}**")
+    if branch == "recycling":
+        flow_variant = text["new_recycling_flow"] if st.session_state.get("recycling_flow_variant") == "new" else text["old_recycling_flow"]
+        st.write(f"{text['recycling_flow_version']}: **{flow_variant}**")
     st.write(f"{text['cathode_chemistry']}: **{values['cathode_chemistry']}**")
     st.write(f"{text['feedstock_chemistry']}: **{values['feedstock_chemistry']}**")
     st.write(f"{text['manufacturing_location']}: **{values['manufacturing_location']}**")

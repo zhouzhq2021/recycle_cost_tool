@@ -116,6 +116,7 @@ def scenario_record(scenario: Scenario) -> dict[str, object]:
         "feedstock_type": scenario.feedstock_type,
         "feedstock_tonnes_per_year": scenario.feedstock_tonnes_per_year,
         "recycling_process": scenario.recycling_process,
+        "recycling_flow_variant": scenario.recycling_flow_variant,
         "cathode_chemistry": scenario.cathode_chemistry,
         "recycled_content": scenario.recycled_content,
         "cathode_throughput_gwh_per_year": scenario.cathode_throughput_gwh_per_year,
@@ -156,6 +157,7 @@ def scenario_from_inputs(
     manufacturer_to_preprocessor_or_cm_recovery: float,
     recycler_to_cathode_producer: float,
     cathode_producer_to_manufacturer: float,
+    recycling_flow_variant: str = "old",
 ) -> Scenario:
     return Scenario(
         battery_manufactured=battery_manufactured,
@@ -179,6 +181,7 @@ def scenario_from_inputs(
             cathode_producer_to_manufacturer=cathode_producer_to_manufacturer,
         ),
         feedstocks=(FeedstockInput(feedstock_chemistry, feedstock_type, feedstock_tonnes_per_year),),
+        recycling_flow_variant=recycling_flow_variant,
     )
 
 
@@ -219,6 +222,7 @@ def scenario_from_record(record: dict[str, object], fallback: Scenario) -> Scena
         feedstock_type=str(record.get("feedstock_type", primary.feedstock_type)),
         feedstock_tonnes_per_year=safe_float(record.get("feedstock_tonnes_per_year"), primary.tonnes_per_year),
         recycling_process=str(record.get("recycling_process", fallback.recycling_process)),
+        recycling_flow_variant=str(record.get("recycling_flow_variant", fallback.recycling_flow_variant)),
         cathode_chemistry=str(record.get("cathode_chemistry", fallback.cathode_chemistry)),
         recycled_content=safe_float(record.get("recycled_content"), safe_float(fallback.recycled_content)),
         cathode_throughput_gwh_per_year=safe_float(
@@ -361,6 +365,7 @@ def scenario_defaults_from_record(record: dict[str, object], fallback: dict[str,
         "feedstock_type": "feedstock_type",
         "feedstock_tonnes": "feedstock_tonnes_per_year",
         "recycling_process": "recycling_process",
+        "recycling_flow_variant": "recycling_flow_variant",
         "cathode_chemistry": "cathode_chemistry",
         "cathode_throughput": "cathode_throughput_gwh_per_year",
         "recycled_content": "recycled_content",

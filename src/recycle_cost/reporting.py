@@ -38,6 +38,7 @@ from .manufacturing import (
 )
 from .mat_conv import mat_conv_total_summary, mat_conv_total_summary_calculated
 from .model import Scenario
+from .model import uses_new_recycling_flow
 from .preprocessing import preprocessing_cost_summary, preprocessing_environment_summary, preprocessing_throughput
 from .transport import _num, scenario_transport_segments, transport_cost_breakdown, transport_environment_breakdown
 from .parameters import (
@@ -182,6 +183,12 @@ def python_ported_process_stage_output_summary(scenario: Scenario, *, include_wo
     preproc_env = preprocessing_environment_summary(scenario).set_index(CommonColumns.METRIC)
 
     def output_preprocessing_cost_value() -> float:
+        if uses_new_recycling_flow(scenario):
+            return (
+                preprocessing_cost_summary(scenario)
+                .set_index(CommonColumns.ITEM)
+                .loc["Total cost ($/kg feedstock processed)", CommonColumns.VALUE]
+            )
         total = sum(feedstock.tonnes_per_year for feedstock in scenario.feedstocks)
         if total <= 0:
             return (
@@ -214,6 +221,8 @@ def python_ported_process_stage_output_summary(scenario: Scenario, *, include_wo
         return cost.loc["Total cost ($/kg black mass processed)", CommonColumns.VALUE]
 
     def output_cm_cost_value(process: str) -> float | None:
+        if uses_new_recycling_flow(scenario) and process in {"Hydro", "Direct"}:
+            return None
         total = sum(feedstock.tonnes_per_year for feedstock in scenario.feedstocks)
         if total <= 0:
             return None
@@ -226,6 +235,8 @@ def python_ported_process_stage_output_summary(scenario: Scenario, *, include_wo
         return weighted
 
     def cm_revenue_value(process: str) -> float:
+        if uses_new_recycling_flow(scenario) and process in {"Hydro", "Direct"}:
+            return cm_recovery_revenue_per_kg_feed(scenario, process)
         revenue_cells = {
             "Pyro": "BJ186",
             "Hydro": "CL186",
@@ -295,6 +306,8 @@ def python_ported_process_stage_output_summary(scenario: Scenario, *, include_wo
                     for feedstock in scenario.feedstocks
                 ),
             )
+            if uses_new_recycling_flow(scenario) and process in {"Hydro", "Direct"}:
+                output_cost = None
             if output_cost is not None:
                 cost_value = output_cost
             else:

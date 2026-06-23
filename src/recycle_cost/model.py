@@ -47,6 +47,7 @@ class Scenario:
     cathode_throughput_gwh_per_year: float | None
     transport_distances: TransportDistances
     feedstocks: tuple[FeedstockInput, ...]
+    recycling_flow_variant: str = "old"
 
 
 @dataclass(frozen=True)
@@ -231,6 +232,23 @@ def get_scenario_from_preset(preset_name: str) -> Scenario:
         transport_distances=base.transport_distances,
         feedstocks=(FeedstockInput(p["feedstock_chemistry"], p["feedstock_type"], p["feedstock_tonnes"]),),
     )
+
+
+def scenario_recycling_process_key(scenario: Scenario) -> str | None:
+    normalized = scenario.recycling_process.strip().casefold()
+    if "pyro" in normalized:
+        return "Pyro"
+    if "hydro" in normalized:
+        return "Hydro"
+    if normalized == "direct":
+        return "Direct"
+    if normalized == "custom":
+        return "Custom"
+    return None
+
+
+def uses_new_recycling_flow(scenario: Scenario) -> bool:
+    return scenario.recycling_flow_variant == "new" and scenario_recycling_process_key(scenario) in {"Hydro", "Direct"}
 
 
 def output_summary_table() -> pd.DataFrame:

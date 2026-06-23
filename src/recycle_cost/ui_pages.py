@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pandas as pd
 import streamlit as st
 
@@ -89,6 +91,20 @@ from .ui_sidebar import (
     set_page,
     set_scenario_values,
 )
+
+IMG_DEMO_DIR = Path(__file__).resolve().parents[2] / "img_demo"
+FLOW_DEMO_DIR = IMG_DEMO_DIR / "电池回收分支中不同回收方法的新旧流程对比"
+NEW_PRETREATMENT_FLOW_IMAGE = IMG_DEMO_DIR / "电池回收分支中两个新流程的前期预处理流程.png"
+RECYCLING_FLOW_IMAGES = {
+    "Hydro": {
+        "old": FLOW_DEMO_DIR / "湿法回收-旧.png",
+        "new": FLOW_DEMO_DIR / "湿法回收-新.png",
+    },
+    "Direct": {
+        "old": FLOW_DEMO_DIR / "直接回收-旧.png",
+        "new": FLOW_DEMO_DIR / "直接回收-新.png",
+    },
+}
 
 
 def render_app_pages(
@@ -220,21 +236,8 @@ def _render_branch_flow_page(scenario: Scenario, process: str | None, text: dict
         st.title(text["battery_recycling_workspace"])
         st.caption(text["custom_flow_hint"])
         _render_scenario_strip(scenario, process or "Hydro", text)
-        _render_step_cards(
-            [
-                ("Col&Trans Par.", text["transport_parameters_desc"], "recycling_transport"),
-                ("Disassembly", text["disassembly_parameters_desc"], "recycling_disassembly"),
-                ("Preproc. Par.", text["preprocessing_parameters_desc"], "recycling_preprocessing"),
-                ("CM Rec Par.", text["cm_recovery_parameters_desc"], "recycling_cm"),
-                ("Cath. Prod. Par.", text["cathode_parameters_desc"], "recycling_cathode"),
-                ("Man Par. - cell", text["cell_manufacturing_desc"], "recycling_manufacturing"),
-                ("Man Par. - pack", text["pack_manufacturing_desc"], "recycling_manufacturing"),
-                ("Mat. Conv Par.", text["mat_conversion_parameters_desc"], "recycling_matconv"),
-                ("Output", text["output_parameters_desc"], "results"),
-            ],
-            text,
-            return_page="branch_flow",
-        )
+        _render_recycling_flow_preview(process or "Hydro", st.session_state.get("recycling_flow_variant", "old"), text)
+        _render_step_cards(_recycling_flow_cards(process or "Hydro", text), text, return_page="branch_flow")
     else:
         st.title(text["select_branch"])
         st.info(text["branch_required"])
@@ -560,6 +563,59 @@ def _render_step_cards(
                             set_page("module", module=target, return_page=return_page)
 
 
+def _recycling_flow_cards(process: str, text: dict[str, str]) -> list[tuple[str, str, str]]:
+    variant = st.session_state.get("recycling_flow_variant", "old")
+    if variant == "new" and process == "Hydro":
+        return [
+            (text["new_preprocessing"], text["new_preprocessing_desc"], "recycling_new_preprocessing"),
+            (text["post_treatment_cathode"], text["post_treatment_cathode_desc"], "recycling_cathode"),
+            (text["lithium_extraction"], text["lithium_extraction_desc"], "recycling_cm"),
+            (text["purification_coprecipitation"], text["purification_coprecipitation_desc"], "recycling_cm"),
+            (text["multi_stage_calcination"], text["multi_stage_calcination_desc"], "recycling_cathode"),
+            (text["new_flow_output"], text["output_parameters_desc"], "results"),
+        ]
+    if variant == "new" and process == "Direct":
+        return [
+            (text["new_preprocessing"], text["new_preprocessing_desc"], "recycling_new_preprocessing"),
+            (text["post_treatment_cathode"], text["post_treatment_cathode_desc"], "recycling_cathode"),
+            (text["direct_molten_salt"], text["direct_molten_salt_desc"], "recycling_cm"),
+            (text["direct_chemical_etching"], text["direct_chemical_etching_desc"], "recycling_cm"),
+            (text["direct_re_lithiation"], text["direct_re_lithiation_desc"], "recycling_cathode"),
+            (text["new_flow_output"], text["output_parameters_desc"], "results"),
+        ]
+    return [
+        ("Col&Trans Par.", text["transport_parameters_desc"], "recycling_transport"),
+        ("Disassembly", text["disassembly_parameters_desc"], "recycling_disassembly"),
+        ("Preproc. Par.", text["preprocessing_parameters_desc"], "recycling_preprocessing"),
+        ("CM Rec Par.", text["cm_recovery_parameters_desc"], "recycling_cm"),
+        ("Cath. Prod. Par.", text["cathode_parameters_desc"], "recycling_cathode"),
+        ("Man Par. - cell", text["cell_manufacturing_desc"], "recycling_manufacturing"),
+        ("Man Par. - pack", text["pack_manufacturing_desc"], "recycling_manufacturing"),
+        ("Mat. Conv Par.", text["mat_conversion_parameters_desc"], "recycling_matconv"),
+        ("Output", text["output_parameters_desc"], "results"),
+    ]
+
+
+def _render_recycling_flow_preview(process: str, variant: str, text: dict[str, str]) -> None:
+    if process not in RECYCLING_FLOW_IMAGES:
+        st.info(text["flow_variant_only_hydro_direct"])
+        return
+    st.subheader(text["recycling_flow_version"])
+    labels = {"old": text["old_recycling_flow"], "new": text["new_recycling_flow"]}
+    st.caption(f"{text['selected_recycling_flow']}: {labels.get(variant, labels['old'])}")
+    images = RECYCLING_FLOW_IMAGES[process]
+    cols = st.columns(2, gap="large")
+    for col, key in zip(cols, ("old", "new"), strict=True):
+        with col:
+            st.markdown(f"**{labels[key]}**")
+            if key == "old":
+                st.caption(text["legacy_preprocessing_required"])
+            elif key == "new":
+                st.caption(text["new_preprocessing_required"])
+                st.image(str(NEW_PRETREATMENT_FLOW_IMAGE), width="stretch")
+            st.image(str(images[key]), width="stretch")
+
+
 def _branch_parameter_sections(branch: str, text: dict[str, str]) -> list[tuple[str, str, str]]:
     if branch == "production":
         return [
@@ -641,6 +697,8 @@ def _render_recycling_module(active: str, scenario: Scenario, process: str | Non
             text,
             user_table,
         )
+    elif active == "recycling_new_preprocessing":
+        _render_new_preprocessing_section(scenario, text)
     elif active == "recycling_cm":
         render_cm_recovery_section(
             scenario,
@@ -675,6 +733,64 @@ def _render_recycling_module(active: str, scenario: Scenario, process: str | Non
         render_transport_section(
             transport_cost_breakdown(segments=transport_segments),
             transport_environment_breakdown(segments=transport_segments),
+            text,
+            user_table,
+        )
+
+
+def _render_new_preprocessing_section(scenario: Scenario, text: dict[str, str]) -> None:
+    st.subheader(text["new_preprocessing_flow"])
+    st.caption(text["new_preprocessing_required"])
+    st.image(str(NEW_PRETREATMENT_FLOW_IMAGE), width="stretch")
+
+    steps = pd.DataFrame(
+        [
+            {
+                text["process_step"]: text["cell_perforation"],
+                text["process_role"]: text["cell_perforation_role"],
+                text["process_output"]: text["perforated_cells"],
+            },
+            {
+                text["process_step"]: text["flash_extraction"],
+                text["process_role"]: text["flash_extraction_role"],
+                text["process_output"]: text["battery_electrolyte"],
+            },
+            {
+                text["process_step"]: text["supercritical_co2_extraction"],
+                text["process_role"]: text["supercritical_co2_role"],
+                text["process_output"]: text["electrolyte_salts_solvents"],
+            },
+            {
+                text["process_step"]: text["disassembly_crushing"],
+                text["process_role"]: text["disassembly_crushing_role"],
+                text["process_output"]: text["classified_solids"],
+            },
+            {
+                text["process_step"]: text["magnetic_density_separation"],
+                text["process_role"]: text["magnetic_density_role"],
+                text["process_output"]: text["al_cu_steel_plastics"],
+            },
+            {
+                text["process_step"]: text["froth_flotation"],
+                text["process_role"]: text["froth_flotation_role"],
+                text["process_output"]: text["s_anode_s_cathode"],
+            },
+        ]
+    )
+    st.dataframe(steps, width="stretch", hide_index=True)
+
+    with st.expander(text["new_preprocessing_reference_data"], expanded=False):
+        render_preprocessing_section(
+            scenario,
+            preprocessing_feedstock_streams(scenario),
+            preprocessing_feedstock_composition(scenario),
+            preprocessing_product_outputs(scenario),
+            preprocessing_black_mass_composition(scenario),
+            preprocessing_environment_summary(scenario),
+            preprocessing_cost_summary(scenario),
+            preprocessing_equipment_table(scenario),
+            preprocessing_capex_summary(scenario),
+            preprocessing_opex_summary(scenario),
             text,
             user_table,
         )
@@ -810,6 +926,44 @@ def _render_recycling_process_parameters(values: dict[str, object], options, tex
         options.recycling_processes,
         index=option_index(options.recycling_processes, str(values["recycling_process"])),
     )
+    process_key = recycling_process_key(str(values["recycling_process"]))
+    if process_key in RECYCLING_FLOW_IMAGES:
+        variant_labels = {"old": text["old_recycling_flow"], "new": text["new_recycling_flow"]}
+        current_variant = st.session_state.get("recycling_flow_variant", "old")
+        selected_variant = st.radio(
+            text["recycling_flow_version"],
+            ["old", "new"],
+            format_func=lambda key: variant_labels[key],
+            index=0 if current_variant == "old" else 1,
+            horizontal=True,
+        )
+        if selected_variant != current_variant:
+            st.session_state.recycling_flow_variant = selected_variant
+            st.session_state.calculation_done = False
+        values["recycling_flow_variant"] = selected_variant
+        st.caption(text["new_flow_calculation_note"])
+        _render_flow_comparison_images(process_key, selected_variant, text)
+    else:
+        st.session_state.recycling_flow_variant = "old"
+        values["recycling_flow_variant"] = "old"
+        st.info(text["flow_variant_only_hydro_direct"])
+
+
+def _render_flow_comparison_images(process_key: str, selected_variant: str, text: dict[str, str]) -> None:
+    labels = {"old": text["old_recycling_flow"], "new": text["new_recycling_flow"]}
+    cols = st.columns(2, gap="large")
+    for col, variant in zip(cols, ("old", "new"), strict=True):
+        with col:
+            title = labels[variant]
+            if variant == selected_variant:
+                title = f"{title} · {text['selected']}"
+            st.markdown(f"**{title}**")
+            if variant == "old":
+                st.caption(text["legacy_preprocessing_required"])
+            elif variant == "new":
+                st.caption(text["new_preprocessing_required"])
+                st.image(str(NEW_PRETREATMENT_FLOW_IMAGE), width="stretch")
+            st.image(str(RECYCLING_FLOW_IMAGES[process_key][variant]), width="stretch")
 
 
 def _render_recycling_transport_parameters(values: dict[str, object], text: dict[str, str]) -> None:
@@ -868,6 +1022,7 @@ def _module_title(module: str, text: dict[str, str]) -> str:
         "recycling_transport": "Col&Trans Par.",
         "recycling_disassembly": text["disassembly"],
         "recycling_preprocessing": "Preproc. Par.",
+        "recycling_new_preprocessing": text["new_preprocessing"],
         "recycling_cm": "CM Rec Par.",
         "recycling_cathode": "Cath. Prod. Par.",
         "recycling_manufacturing": "Man Par.",

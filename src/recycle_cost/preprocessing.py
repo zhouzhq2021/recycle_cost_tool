@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-from .model import FeedstockInput, Scenario
+from .model import FeedstockInput, Scenario, uses_new_recycling_flow
 from .parameters import workbook_number, workbook_sheet
 from .schemas import CommonColumns, ManufacturingColumns
 from .transport import _num
@@ -110,6 +110,15 @@ DEFAULT_PREPROCESSING_PARAMETERS = PreprocessingParameters(
     wastewater_gal_per_kg=0.1 * 3.78541,
 )
 
+NEW_PREPROCESSING_PARAMETERS = PreprocessingParameters(
+    nitrogen_kg_per_kg=0.015,
+    diesel_mj_per_kg=0.2,
+    natural_gas_mj_per_kg=0.35,
+    electricity_mj_per_kg=0.85,
+    process_water_gal_per_kg=0.22,
+    wastewater_gal_per_kg=0.22 * 3.78541,
+)
+
 DEFAULT_PREPROCESSING_PLANT_PARAMETERS = PreprocessingPlantParameters(
     hours_per_day=24.0,
     processing_hours_per_day=20.0,
@@ -135,6 +144,41 @@ GENERIC_PREPROCESSING_EQUIPMENT_NAMES = (
     "Gas treatment",
     "Wheel loader",
 )
+
+NEW_PREPROCESSING_EQUIPMENT_NAMES = (
+    "Hopper",
+    "Conveyor",
+    "Cell Perforation",
+    "Flash tank",
+    "Supercritical CO2 system",
+    "Automated disassembly of battery",
+    "Crusher",
+    "Screen, vibrating",
+    "Density separator",
+    "Magnetic separator",
+    "Froth flotation cell",
+    "Filter press",
+    "Dryer",
+    "Water treatment",
+    "Wheel loader",
+)
+
+NEW_PREPROCESSING_EQUIPMENT_ALIASES = {
+    "Cell Perforation": "Battery/Cell discharger",
+}
+
+NEW_PREPROCESSING_PRODUCT_YIELDS = {
+    "cathode_recovery": 0.985,
+    "anode_recovery": 0.94,
+    "carbon_black_to_anode": 0.75,
+    "aluminum_recovery": 0.92,
+    "copper_recovery": 0.92,
+    "steel_recovery": 0.94,
+    "plastics_recovery": 0.88,
+    "electrolyte_lipf6_recovery": 0.78,
+    "electrolyte_solvent_recovery": 0.82,
+    "residual_to_s_cathode": 0.015,
+}
 
 PREPROCESSING_OPEX_RATES = PreprocessingOpexRates(
     electricity_per_kwh=0.08838709677419355,
@@ -193,12 +237,20 @@ def default_preprocessing_parameters() -> PreprocessingParameters:
     return DEFAULT_PREPROCESSING_PARAMETERS
 
 
+def preprocessing_parameters_for_scenario(scenario: Scenario) -> PreprocessingParameters:
+    return NEW_PREPROCESSING_PARAMETERS if uses_new_recycling_flow(scenario) else DEFAULT_PREPROCESSING_PARAMETERS
+
+
 def default_preprocessing_plant_parameters() -> PreprocessingPlantParameters:
     return DEFAULT_PREPROCESSING_PLANT_PARAMETERS
 
 
 def default_generic_equipment_names() -> list[str]:
     return list(GENERIC_PREPROCESSING_EQUIPMENT_NAMES)
+
+
+def preprocessing_equipment_names_for_scenario(scenario: Scenario) -> list[str]:
+    return list(NEW_PREPROCESSING_EQUIPMENT_NAMES if uses_new_recycling_flow(scenario) else GENERIC_PREPROCESSING_EQUIPMENT_NAMES)
 
 
 def unit_operation_table() -> dict[str, UnitOperationParameters]:
@@ -235,8 +287,8 @@ def preprocessing_equipment_table(scenario: Scenario) -> pd.DataFrame:
     throughput_tpy = preprocessing_throughput(scenario)
     throughput_tph = throughput_tpy / plant.days_per_year / plant.processing_hours_per_day if plant.days_per_year and plant.processing_hours_per_day else 0.0
     records = []
-    for name in default_generic_equipment_names():
-        params = unit_ops.get(name)
+    for name in preprocessing_equipment_names_for_scenario(scenario):
+        params = unit_ops.get(NEW_PREPROCESSING_EQUIPMENT_ALIASES.get(name, name))
         if params is None:
             continue
         throughput = throughput_tph * params.capacity_adjustment
@@ -305,7 +357,7 @@ def preprocessing_capex_summary(scenario: Scenario) -> pd.DataFrame:
 
 def preprocessing_opex_summary(scenario: Scenario) -> pd.DataFrame:
     plant = default_preprocessing_plant_parameters()
-    params = default_preprocessing_parameters()
+    params = preprocessing_parameters_for_scenario(scenario)
     throughput_tpy = preprocessing_throughput(scenario)
     products = preprocessing_product_outputs(scenario).set_index("product")["kg_per_kg_feedstock"].to_dict()
     capex = preprocessing_capex_summary(scenario).set_index(CommonColumns.ITEM)[CommonColumns.VALUE].to_dict()
@@ -489,8 +541,10 @@ def preprocessing_feedstock_composition(scenario: Scenario) -> pd.DataFrame:
 
 
 def preprocessing_product_outputs(scenario: Scenario) -> pd.DataFrame:
-    params = default_preprocessing_parameters()
+    params = preprocessing_parameters_for_scenario(scenario)
     composition = preprocessing_feedstock_composition(scenario).set_index(CommonColumns.MATERIAL)["kg_per_kg_feedstock"].to_dict()
+    if uses_new_recycling_flow(scenario):
+        return _new_preprocessing_product_outputs(composition, params)
     burn_mass = (
         composition.get("Graphite", 0.0)
         + composition.get("Plastic: PP", 0.0)
@@ -534,6 +588,41 @@ def preprocessing_product_outputs(scenario: Scenario) -> pd.DataFrame:
     )
 
 
+def _new_preprocessing_product_outputs(
+    composition: dict[str, float],
+    params: PreprocessingParameters,
+) -> pd.DataFrame:
+    yields = NEW_PREPROCESSING_PRODUCT_YIELDS
+    plastics = composition.get("Plastic: PP", 0.0) + composition.get("Plastic: PE", 0.0) + composition.get("Plastic: PET", 0.0)
+    electrolyte_solvents = composition.get("Electrolyte: EC", 0.0) + composition.get("Electrolyte: DMC", 0.0)
+    residual_binders = composition.get("Binder: PVDF", 0.0) + composition.get("Binder: anode", 0.0)
+    products = {
+        "S-Cathode": (
+            composition.get("Active cathode material", 0.0) * yields["cathode_recovery"]
+            + composition.get("Carbon black", 0.0) * (1 - yields["carbon_black_to_anode"])
+            + residual_binders * yields["residual_to_s_cathode"]
+        ),
+        "S-Anode": (
+            composition.get("Graphite", 0.0) * yields["anode_recovery"]
+            + composition.get("Carbon black", 0.0) * yields["carbon_black_to_anode"]
+        ),
+        "Aluminum": composition.get("Aluminum", 0.0) * yields["aluminum_recovery"],
+        "Copper": composition.get("Copper", 0.0) * yields["copper_recovery"],
+        "Steel": (composition.get("Steel", 0.0) + composition.get("Iron", 0.0)) * yields["steel_recovery"],
+        "Plastics": plastics * yields["plastics_recovery"],
+        "Battery electrolyte": (
+            composition.get("Electrolyte: LiPF6", 0.0) * yields["electrolyte_lipf6_recovery"]
+            + electrolyte_solvents * yields["electrolyte_solvent_recovery"]
+        ),
+        "Waste(water)": params.wastewater_gal_per_kg,
+    }
+    accounted = sum(value for product, value in products.items() if product != "Waste(water)")
+    products["Waste (solid)"] = max(0.0, 1 + params.nitrogen_kg_per_kg - accounted)
+    return pd.DataFrame(
+        [{"product": product, "kg_per_kg_feedstock": value} for product, value in products.items()]
+    )
+
+
 def preprocessing_black_mass_composition(scenario: Scenario) -> pd.DataFrame:
     black_mass_throughput = sum(f.tonnes_per_year for f in scenario.feedstocks if f.feedstock_type == "Black mass")
     
@@ -556,27 +645,36 @@ def preprocessing_black_mass_composition(scenario: Scenario) -> pd.DataFrame:
 
     streams = preprocessing_feedstock_streams(scenario)
     composition = preprocessing_feedstock_composition(scenario).set_index(CommonColumns.MATERIAL)["kg_per_kg_feedstock"].to_dict()
-    black_mass_row = preprocessing_product_outputs(scenario).set_index("product")
-    black_mass = black_mass_row.loc["Black mass", "kg_per_kg_feedstock"] if "Black mass" in black_mass_row.index else 0.0
+    product_row = preprocessing_product_outputs(scenario).set_index("product")
+    if uses_new_recycling_flow(scenario):
+        product_mass = product_row.loc["S-Cathode", "kg_per_kg_feedstock"] if "S-Cathode" in product_row.index else 0.0
+    else:
+        product_mass = product_row.loc["Black mass", "kg_per_kg_feedstock"] if "Black mass" in product_row.index else 0.0
     values = {material: 0.0 for material in BLACK_MASS_COMPONENTS}
-    
-    values["Graphite"] = composition.get("Graphite", 0.0) * 0.95
-    values["Carbon black"] = composition.get("Carbon black", 0.0) * 0.95
-    values["Binder: PVDF"] = composition.get("Binder: PVDF", 0.0) * 0.05
-    values["Binder: anode"] = composition.get("Binder: anode", 0.0) * 0.05
-    values["Copper"] = composition.get("Copper", 0.0) * 0.05
-    values["Aluminum"] = composition.get("Aluminum", 0.0) * 0.05
+
+    if uses_new_recycling_flow(scenario):
+        values["Carbon black"] = composition.get("Carbon black", 0.0) * (1 - NEW_PREPROCESSING_PRODUCT_YIELDS["carbon_black_to_anode"])
+        residual_binders = composition.get("Binder: PVDF", 0.0) + composition.get("Binder: anode", 0.0)
+        values["Binder: PVDF"] = residual_binders * NEW_PREPROCESSING_PRODUCT_YIELDS["residual_to_s_cathode"]
+    else:
+        values["Graphite"] = composition.get("Graphite", 0.0) * 0.95
+        values["Carbon black"] = composition.get("Carbon black", 0.0) * 0.95
+        values["Binder: PVDF"] = composition.get("Binder: PVDF", 0.0) * 0.05
+        values["Binder: anode"] = composition.get("Binder: anode", 0.0) * 0.05
+        values["Copper"] = composition.get("Copper", 0.0) * 0.05
+        values["Aluminum"] = composition.get("Aluminum", 0.0) * 0.05
 
     for stream in streams.to_dict("records"):
         chem = stream[CommonColumns.CHEMISTRY]
         if chem in CHEMISTRIES:
             lookup = preprocessing_composition_lookup(stream["feedstock_type"]).get(chem, {})
             active = lookup.get("Active cathode material", 0.0)
-            values[chem] += float(stream["share"]) * active * 0.95
+            recovery = NEW_PREPROCESSING_PRODUCT_YIELDS["cathode_recovery"] if uses_new_recycling_flow(scenario) else 0.95
+            values[chem] += float(stream["share"]) * active * recovery
 
     rows = []
     for component in BLACK_MASS_COMPONENTS:
-        value = values[component] / black_mass if black_mass else 0.0
+        value = values[component] / product_mass if product_mass else 0.0
         rows.append({CommonColumns.COMPONENT: component, "fraction_of_black_mass": value})
     return pd.DataFrame(rows)
 
@@ -584,25 +682,46 @@ def preprocessing_black_mass_composition(scenario: Scenario) -> pd.DataFrame:
 def preprocessing_environment_summary(scenario: Scenario) -> pd.DataFrame:
     throughput = preprocessing_throughput(scenario)
     process_ghg = preprocessing_process_ghg_value(scenario) if throughput > 0 else 0.0
+    params = preprocessing_parameters_for_scenario(scenario)
     rows = []
     for metric, material, energy, process in PREPROCESSING_ENVIRONMENT_ROWS:
         material_input = material if throughput > 0 else 0.0
+        energy_input = energy
         process_value = process
+        if uses_new_recycling_flow(scenario):
+            if metric in {"Total Energy", "Fossil fuels"}:
+                energy_input = params.electricity_mj_per_kg + params.natural_gas_mj_per_kg + params.diesel_mj_per_kg
+            elif metric == "Natural gas":
+                energy_input = params.natural_gas_mj_per_kg
+            elif metric == "Petroleum":
+                energy_input = params.diesel_mj_per_kg
+            elif metric == "Water consumption":
+                process_value = params.process_water_gal_per_kg
+            elif metric == "CO2":
+                process_value = process_ghg
+            elif metric == "CO2 w/ C in VOC & CO":
+                process_value = process_ghg
+            elif metric == "GHGs":
+                process_value = process_ghg
         if metric in {"CO2", "CO2 w/ C in VOC & CO", "GHGs"}:
             process_value = process_ghg
         rows.append(
             {
                 CommonColumns.METRIC: metric,
                 "material_input": material_input,
-                "energy_input": energy,
+                "energy_input": energy_input,
                 "process": process_value,
-                ManufacturingColumns.TOTAL: material_input + energy + process_value,
+                ManufacturingColumns.TOTAL: material_input + energy_input + process_value,
             }
         )
     return pd.DataFrame(rows)
 
 
 def preprocessing_process_ghg_value(scenario: Scenario) -> float:
+    if uses_new_recycling_flow(scenario):
+        params = preprocessing_parameters_for_scenario(scenario)
+        # Electricity-heavy pretreatment with limited thermal destruction.
+        return params.electricity_mj_per_kg / 3.6 * 0.45 + params.natural_gas_mj_per_kg * 56.1 + params.diesel_mj_per_kg * 74.1
     streams = preprocessing_feedstock_streams(scenario)
     if streams.empty:
         return 0.0
