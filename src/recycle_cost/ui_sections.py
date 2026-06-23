@@ -80,6 +80,67 @@ def recycling_report_summary_table(output_summary: pd.DataFrame, active_process:
     return pd.DataFrame(rows, columns=["metric", active_process, "unit"])
 
 
+def recycling_route_comparison_table(output_summary: pd.DataFrame) -> pd.DataFrame:
+    output_index = output_summary.set_index("metric")
+    routes = ["Pyro", "Hydro", "Direct", "Custom"]
+    rows = []
+    for route in routes:
+        cost = _output_metric_value(output_index, "Recycling cost", route)
+        revenue = _output_metric_value(output_index, "Recycling revenue", route)
+        rows.append(
+            {
+                "route": route,
+                "cost": cost,
+                "revenue": revenue,
+                "net_cost": cost - revenue,
+                "ghgs": _output_metric_value(output_index, "Recycling GHGs", route),
+                "energy": _output_metric_value(output_index, "Recycling total energy", route),
+                "water": _output_metric_value(output_index, "Recycling water", route),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def production_report_summary_table(output_summary: pd.DataFrame) -> pd.DataFrame:
+    output_index = output_summary.set_index("metric")
+    rows = [
+        ("Cell manufacturing cost", _output_metric_value(output_index, "Cell manufacturing cost", "Virgin"), "$/kWh"),
+        ("Cell manufacturing total energy", _output_metric_value(output_index, "Cell manufacturing total energy", "Virgin"), "MJ/kWh"),
+        ("Cell manufacturing water", _output_metric_value(output_index, "Cell manufacturing water", "Virgin"), "gal/kWh"),
+        ("Cell manufacturing GHGs", _output_metric_value(output_index, "Cell manufacturing GHGs", "Virgin"), "g CO2e/kWh"),
+    ]
+    return pd.DataFrame(rows, columns=["metric", "Virgin", "unit"])
+
+
+def _output_metric_value(output_index: pd.DataFrame, metric: str, column: str) -> float:
+    try:
+        value = output_index.loc[metric, column]
+    except (KeyError, TypeError):
+        return 0.0
+    try:
+        if pd.isna(value):
+            return 0.0
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def route_comparison_chart(route_comparison: pd.DataFrame, value_column: str, title: str) -> alt.Chart:
+    chart_data = route_comparison[["route", value_column]].copy()
+    base = alt.Chart(chart_data).encode(
+        y=alt.Y("route:N", title=None, sort=["Pyro", "Hydro", "Direct", "Custom"]),
+        x=alt.X(f"{value_column}:Q", title=title),
+        tooltip=["route", alt.Tooltip(f"{value_column}:Q", format=",.4f")],
+    )
+    bars = base.mark_bar(cornerRadiusTopRight=3, cornerRadiusBottomRight=3, size=24).encode(
+        color=alt.Color("route:N", legend=None, sort=["Pyro", "Hydro", "Direct", "Custom"]),
+    )
+    labels = base.mark_text(align="left", dx=4, fontSize=11).encode(
+        text=alt.Text(f"{value_column}:Q", format=",.2f"),
+    )
+    return (bars + labels).properties(height=220)
+
+
 def render_report_table(title: str | None, data: pd.DataFrame, *, height: int = DEFAULT_TABLE_HEIGHT) -> None:
     if title:
         st.markdown(f"**{title}**")
@@ -178,6 +239,12 @@ def render_overview_section(
         st.altair_chart(metric_chart(summary, metric), width="stretch")
 
     st.subheader(text["report_results"])
+    route_comparison = recycling_route_comparison_table(summary)
+    chart_cols = st.columns(2, gap="medium")
+    with chart_cols[0]:
+        st.altair_chart(route_comparison_chart(route_comparison, "net_cost", text["net_recycling_cost"]), width="stretch")
+    with chart_cols[1]:
+        st.altair_chart(route_comparison_chart(route_comparison, "ghgs", "GHGs"), width="stretch")
     render_table_grid(
         [(text["report_results"], report_results, DEFAULT_TABLE_HEIGHT), (text["manufacturing_summary"], manufacturing_summary)],
         text,
@@ -247,10 +314,13 @@ def _render_production_report(output_summary, manufacturing_summary, report_resu
         "python_recycled_custom",
     ]
     manufacturing_table = manufacturing_summary[[column for column in manufacturing_columns if column in manufacturing_summary.columns]]
+    production_summary = production_report_summary_table(output_summary)
 
-    tab_report, tab_output, tab_manufacturing = st.tabs(
-        [text["report_sheet_summary"], text["output_summary"], text["manufacturing_summary"]]
+    tab_summary, tab_report, tab_output, tab_manufacturing = st.tabs(
+        [text["report_key_findings"], text["report_sheet_summary"], text["output_summary"], text["manufacturing_summary"]]
     )
+    with tab_summary:
+        render_report_table(text["report_key_findings"], production_summary, height=220)
     with tab_report:
         render_report_table(text["production_report"], report_table)
     with tab_output:
@@ -310,6 +380,7 @@ def _render_recycling_report(
         output_summary["metric"].astype(str).str.startswith(("Recycling", "Collection"))
     ][["metric", "category", "unit", "Virgin", "Pyro", "Hydro", "Direct", "Custom"]]
     summary_table = recycling_report_summary_table(output_summary, active_process)
+    route_comparison = recycling_route_comparison_table(output_summary)
 
     tab_summary, tab_report, tab_stage, tab_cost, tab_revenue, tab_output = st.tabs(
         [
@@ -323,6 +394,12 @@ def _render_recycling_report(
     )
     with tab_summary:
         render_report_table(text["report_key_findings"], summary_table, height=260)
+        chart_cols = st.columns(2, gap="medium")
+        with chart_cols[0]:
+            st.altair_chart(route_comparison_chart(route_comparison, "net_cost", text["net_recycling_cost"]), width="stretch")
+        with chart_cols[1]:
+            st.altair_chart(route_comparison_chart(route_comparison, "ghgs", "GHGs"), width="stretch")
+        render_report_table(text["route_comparison"], route_comparison, height=260)
     with tab_report:
         render_report_table(text["recycling_report"], closed_loop_report)
     with tab_stage:
