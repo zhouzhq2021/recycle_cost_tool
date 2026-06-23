@@ -5,13 +5,20 @@ from dataclasses import dataclass
 
 import pandas as pd
 
+from .custom_chemistry import (
+    CUSTOM_NMC_LABEL,
+    NMC_CATHODE_MATERIALS,
+    custom_feedstock_composition,
+    is_custom_nmc,
+    workbook_chemistry,
+)
 from .model import FeedstockInput, Scenario, uses_new_recycling_flow
 from .parameters import workbook_number, workbook_sheet
 from .schemas import CommonColumns, ManufacturingColumns
 from .transport import _num
 
 
-CHEMISTRIES = ("LCO", "NMC(111)", "NMC(532)", "NMC(622)", "NMC(811)", "NCA", "LMO", "LFP")
+CHEMISTRIES = NMC_CATHODE_MATERIALS
 FEEDSTOCK_MATERIALS = (
     "Active cathode material",
     "Graphite",
@@ -38,6 +45,7 @@ BLACK_MASS_COMPONENTS = (
     "NMC(532)",
     "NMC(622)",
     "NMC(811)",
+    CUSTOM_NMC_LABEL,
     "NCA",
     "LMO",
     "LFP",
@@ -496,7 +504,33 @@ def preprocessing_composition_lookup(feedstock_type: str) -> dict[str, dict[str,
             material = ws.cell(row, 2).value
             if material is not None:
                 table[chemistry][str(material)] = _num(ws.cell(row, col).value)
+    if "NMC(622)" in table:
+        table[CUSTOM_NMC_LABEL] = dict(table["NMC(622)"])
     return table
+
+
+def default_custom_feedstock_composition(feedstock_type: str) -> dict[str, float]:
+    lookup = preprocessing_composition_lookup(feedstock_type).get(CUSTOM_NMC_LABEL, {})
+    return {material: float(lookup.get(material, 0.0)) for material in FEEDSTOCK_MATERIALS}
+
+
+def _feedstock_material_lookup(scenario: Scenario, feedstock_type: str, chemistry: str) -> dict[str, float]:
+    lookup_chemistry = workbook_chemistry(chemistry) if is_custom_nmc(chemistry) else chemistry
+    lookup = dict(preprocessing_composition_lookup(feedstock_type).get(lookup_chemistry, {}))
+    if not is_custom_nmc(chemistry) or feedstock_type == "Black mass":
+        return lookup
+
+    custom_values = custom_feedstock_composition(scenario)
+    custom_feedstock_type = getattr(scenario, "custom_feedstock_composition_feedstock_type", None)
+    if custom_feedstock_type and custom_feedstock_type != feedstock_type:
+        return lookup
+    if not custom_values:
+        return lookup
+
+    for material in FEEDSTOCK_MATERIALS:
+        if material in custom_values:
+            lookup[material] = max(0.0, _num(custom_values[material]))
+    return lookup
 
 
 def preprocessing_feedstock_streams(scenario: Scenario) -> pd.DataFrame:
@@ -530,7 +564,7 @@ def preprocessing_feedstock_composition(scenario: Scenario) -> pd.DataFrame:
     streams = preprocessing_feedstock_streams(scenario)
     composition = {material: 0.0 for material in FEEDSTOCK_MATERIALS}
     for stream in streams.to_dict("records"):
-        lookup = preprocessing_composition_lookup(stream["feedstock_type"]).get(stream[CommonColumns.CHEMISTRY], {})
+        lookup = _feedstock_material_lookup(scenario, stream["feedstock_type"], stream[CommonColumns.CHEMISTRY])
         for material in FEEDSTOCK_MATERIALS:
             composition[material] += float(stream["share"]) * lookup.get(material, 0.0)
 
@@ -630,7 +664,8 @@ def preprocessing_black_mass_composition(scenario: Scenario) -> pd.DataFrame:
         composition = {material: 0.0 for material in BLACK_MASS_COMPONENTS}
         for f in scenario.feedstocks:
             if f.feedstock_type == "Black mass":
-                lookup = preprocessing_composition_lookup("Black mass").get(f.chemistry, {})
+                lookup_chemistry = workbook_chemistry(f.chemistry) if is_custom_nmc(f.chemistry) else f.chemistry
+                lookup = preprocessing_composition_lookup("Black mass").get(lookup_chemistry, {})
                 share = f.tonnes_per_year / black_mass_throughput
                 for material in BLACK_MASS_COMPONENTS:
                     if material == f.chemistry:
@@ -667,7 +702,7 @@ def preprocessing_black_mass_composition(scenario: Scenario) -> pd.DataFrame:
     for stream in streams.to_dict("records"):
         chem = stream[CommonColumns.CHEMISTRY]
         if chem in CHEMISTRIES:
-            lookup = preprocessing_composition_lookup(stream["feedstock_type"]).get(chem, {})
+            lookup = _feedstock_material_lookup(scenario, stream["feedstock_type"], chem)
             active = lookup.get("Active cathode material", 0.0)
             recovery = NEW_PREPROCESSING_PRODUCT_YIELDS["cathode_recovery"] if uses_new_recycling_flow(scenario) else 0.95
             values[chem] += float(stream["share"]) * active * recovery

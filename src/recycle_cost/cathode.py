@@ -6,6 +6,7 @@ import pandas as pd
 
 from .mat_conv import mat_conv_available_precursors
 from .model import Scenario
+from .custom_chemistry import workbook_chemistry
 from .parameters import (
     CATHODE_CHEMISTRY_COLUMNS,
     CATHODE_COST_PER_LINE_COLUMNS,
@@ -76,6 +77,7 @@ def _valid_label(value) -> bool:
 
 
 def _chemistries(chemistry: str | None) -> tuple[str, ...]:
+    chemistry = workbook_chemistry(chemistry)
     if chemistry is None:
         return tuple(PRODUCTION_BLOCKS)
     if chemistry not in PRODUCTION_BLOCKS:
@@ -84,10 +86,15 @@ def _chemistries(chemistry: str | None) -> tuple[str, ...]:
 
 
 def cathode_chemistry_for_scenario(scenario: Scenario) -> str:
+    if scenario.cathode_chemistry:
+        mapped = workbook_chemistry(scenario.cathode_chemistry)
+        if mapped in PRODUCTION_BLOCKS:
+            return mapped
     if scenario.cathode_chemistry in PRODUCTION_BLOCKS:
         return scenario.cathode_chemistry
-    if scenario.manufacturing_chemistry in PRODUCTION_BLOCKS:
-        return scenario.manufacturing_chemistry
+    mapped_manufacturing = workbook_chemistry(scenario.manufacturing_chemistry)
+    if mapped_manufacturing in PRODUCTION_BLOCKS:
+        return mapped_manufacturing
     return "NMC(622)"
 
 

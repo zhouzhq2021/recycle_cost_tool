@@ -7,7 +7,6 @@ build/
 dist/
 wheels/
 *.egg-info
-img_demo
 
 # Virtual environments
 .venv

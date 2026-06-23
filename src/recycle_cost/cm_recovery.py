@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 import pandas as pd
 
+from .custom_chemistry import CUSTOM_NMC_LABEL, NMC_CATHODE_MATERIALS, custom_nmc_elemental_mass, is_custom_nmc
 from .model import Scenario, default_scenario, uses_new_recycling_flow
 from .preprocessing import (
     unit_operation_table,
@@ -22,6 +23,7 @@ ELEMENTAL_MASS = {
     "NMC(532)": {"Li": 6.94, "Co": 11.7866, "Ni": 29.3465, "Mn": 16.4814, "O": 31.998, "P": 0, "F": 0, "Al": 0, "Fe": 0, "Total": 96.5525},
     "NMC(622)": {"Li": 6.94, "Co": 11.7866, "Ni": 35.215799999999994, "Mn": 10.9876, "O": 31.998, "P": 0, "F": 0, "Al": 0, "Fe": 0, "Total": 96.928},
     "NMC(811)": {"Li": 6.94, "Co": 5.8933, "Ni": 46.9544, "Mn": 5.4938, "O": 31.998, "P": 0, "F": 0, "Al": 0, "Fe": 0, "Total": 97.2795},
+    CUSTOM_NMC_LABEL: {"Li": 6.94, "Co": 11.7866, "Ni": 35.215799999999994, "Mn": 10.9876, "O": 31.998, "P": 0, "F": 0, "Al": 0, "Fe": 0, "Total": 96.928},
     "NCA": {"Li": 6.94, "Co": 8.83995, "Ni": 46.9544, "Mn": 0, "O": 31.998, "P": 0, "F": 0, "Al": 1.3491, "Fe": 0, "Total": 96.08144999999999},
     "LMO": {"Li": 6.94, "Co": 0, "Ni": 0, "Mn": 109.876, "O": 63.996, "P": 0, "F": 0, "Al": 0, "Fe": 0, "Total": 180.812},
     "LFP": {"Li": 6.94, "Co": 0, "Ni": 0, "Mn": 0, "O": 63.996, "P": 30.974, "F": 0, "Al": 0, "Fe": 55.845, "Total": 157.755},
@@ -141,6 +143,8 @@ CM_RECOVERY_PRODUCT_PRICES = {
     "Rejuvenated NCA": 26.0,
     "Rejuvenated LMO": 9.0,
     "Rejuvenated LFP": 10.0,
+    f"Rejuvenated {CUSTOM_NMC_LABEL}": 25.0,
+    CUSTOM_NMC_LABEL: 25.0,
     "Electrolyte: solvents": 0.15,
     "Graphite": 0.2,
     "Copper metal": 7.366517267999999,
@@ -351,9 +355,10 @@ def cm_recovery_equipment_table(scenario: Scenario, process: str) -> pd.DataFram
     bm = preprocessing_black_mass_composition(scenario).set_index(CommonColumns.COMPONENT)["fraction_of_black_mass"]
     cu = bm.get("Copper", 0.0)
     al = bm.get("Aluminum", 0.0)
-    co = sum(bm.get(chem, 0.0) * ELEMENTAL_MASS[chem]["Co"] / ELEMENTAL_MASS[chem]["Total"] for chem in ELEMENTAL_MASS if chem != "LiPF6")
-    ni = sum(bm.get(chem, 0.0) * ELEMENTAL_MASS[chem]["Ni"] / ELEMENTAL_MASS[chem]["Total"] for chem in ELEMENTAL_MASS if chem != "LiPF6")
-    cathode_sum = sum(bm.get(chem, 0.0) for chem in ["LCO", "NMC(111)", "NMC(532)", "NMC(622)", "NMC(811)", "NCA", "LMO", "LFP"])
+    element_mass = _elemental_mass_for_scenario(scenario)
+    co = sum(bm.get(chem, 0.0) * element_mass[chem]["Co"] / element_mass[chem]["Total"] for chem in element_mass if chem != "LiPF6")
+    ni = sum(bm.get(chem, 0.0) * element_mass[chem]["Ni"] / element_mass[chem]["Total"] for chem in element_mass if chem != "LiPF6")
+    cathode_sum = sum(bm.get(chem, 0.0) for chem in NMC_CATHODE_MATERIALS)
     graphite_sum = bm.get("Graphite", 0.0)
     carbon_black = bm.get("Carbon black", 0.0)
     
@@ -384,7 +389,7 @@ def cm_recovery_equipment_table(scenario: Scenario, process: str) -> pd.DataFram
         elif process == "Direct":
             active_outputs = sum(
                 1
-                for chem in ("LCO", "NMC(111)", "NMC(532)", "NMC(622)", "NMC(811)", "NCA", "LMO", "LFP")
+                for chem in NMC_CATHODE_MATERIALS
                 if bm.get(chem, 0.0) > 0
             )
             output_count = max(
@@ -588,10 +593,11 @@ def _cm_recovery_product_quantities(scenario: Scenario, process: str) -> dict[st
     al = bm.get("Aluminum", 0.0)
     graphite = bm.get("Graphite", 0.0)
 
-    li = sum(bm.get(chem, 0.0) * ELEMENTAL_MASS[chem]["Li"] / ELEMENTAL_MASS[chem]["Total"] for chem in ELEMENTAL_MASS)
-    co = sum(bm.get(chem, 0.0) * ELEMENTAL_MASS[chem]["Co"] / ELEMENTAL_MASS[chem]["Total"] for chem in ELEMENTAL_MASS)
-    ni = sum(bm.get(chem, 0.0) * ELEMENTAL_MASS[chem]["Ni"] / ELEMENTAL_MASS[chem]["Total"] for chem in ELEMENTAL_MASS)
-    mn = sum(bm.get(chem, 0.0) * ELEMENTAL_MASS[chem]["Mn"] / ELEMENTAL_MASS[chem]["Total"] for chem in ELEMENTAL_MASS)
+    element_mass = _elemental_mass_for_scenario(scenario)
+    li = sum(bm.get(chem, 0.0) * element_mass[chem]["Li"] / element_mass[chem]["Total"] for chem in element_mass)
+    co = sum(bm.get(chem, 0.0) * element_mass[chem]["Co"] / element_mass[chem]["Total"] for chem in element_mass)
+    ni = sum(bm.get(chem, 0.0) * element_mass[chem]["Ni"] / element_mass[chem]["Total"] for chem in element_mass)
+    mn = sum(bm.get(chem, 0.0) * element_mass[chem]["Mn"] / element_mass[chem]["Total"] for chem in element_mass)
 
     products = {}
     if process == "Pyro":
@@ -614,7 +620,7 @@ def _cm_recovery_product_quantities(scenario: Scenario, process: str) -> dict[st
         products["Graphite"] = graphite * 0.9
     elif process in {"Direct", "Custom"}:
         if process == "Direct" and uses_new_recycling_flow(scenario):
-            for chem in ["LCO", "NMC(111)", "NMC(532)", "NMC(622)", "NMC(811)", "NCA", "LMO", "LFP"]:
+            for chem in NMC_CATHODE_MATERIALS:
                 val = bm.get(chem, 0.0)
                 if val > 0:
                     products[f"Rejuvenated {chem}"] = val * 0.97
@@ -622,12 +628,23 @@ def _cm_recovery_product_quantities(scenario: Scenario, process: str) -> dict[st
         products["Copper"] = cu * 0.9
         products["Aluminum"] = al * 0.9
         products["Graphite"] = graphite * 0.9
-        for chem in ["LCO", "NMC(111)", "NMC(532)", "NMC(622)", "NMC(811)", "NCA", "LMO", "LFP"]:
+        for chem in NMC_CATHODE_MATERIALS:
             val = bm.get(chem, 0.0)
             if val > 0:
                 products[chem] = val * 0.9
 
     return products
+
+
+def _elemental_mass_for_scenario(scenario: Scenario) -> dict[str, dict[str, float]]:
+    values = dict(ELEMENTAL_MASS)
+    if (
+        is_custom_nmc(scenario.feedstock_chemistry)
+        or is_custom_nmc(scenario.cathode_chemistry)
+        or any(is_custom_nmc(feedstock.chemistry) for feedstock in scenario.feedstocks)
+    ):
+        values[CUSTOM_NMC_LABEL] = custom_nmc_elemental_mass(scenario)
+    return values
 
 
 def _uses_nmc622_workbook_revenue_overrides(scenario: Scenario, process: str) -> bool:

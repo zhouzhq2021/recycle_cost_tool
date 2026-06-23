@@ -21,6 +21,8 @@ from .mat_conv import (
 )
 from .model import FeedstockInput, Scenario, TransportDistances
 from .preprocessing import (
+    FEEDSTOCK_MATERIALS,
+    default_custom_feedstock_composition,
     preprocessing_black_mass_composition,
     preprocessing_feedstock_composition,
     preprocessing_product_outputs,
@@ -117,6 +119,11 @@ def scenario_record(scenario: Scenario) -> dict[str, object]:
         "feedstock_tonnes_per_year": scenario.feedstock_tonnes_per_year,
         "recycling_process": scenario.recycling_process,
         "recycling_flow_variant": scenario.recycling_flow_variant,
+        "custom_nmc_ni": scenario.custom_nmc_ni,
+        "custom_nmc_co": scenario.custom_nmc_co,
+        "custom_nmc_mn": scenario.custom_nmc_mn,
+        "custom_feedstock_composition": dict(scenario.custom_feedstock_composition or {}),
+        "custom_feedstock_composition_feedstock_type": scenario.custom_feedstock_composition_feedstock_type,
         "cathode_chemistry": scenario.cathode_chemistry,
         "recycled_content": scenario.recycled_content,
         "cathode_throughput_gwh_per_year": scenario.cathode_throughput_gwh_per_year,
@@ -158,6 +165,11 @@ def scenario_from_inputs(
     recycler_to_cathode_producer: float,
     cathode_producer_to_manufacturer: float,
     recycling_flow_variant: str = "old",
+    custom_nmc_ni: float = 6.0,
+    custom_nmc_co: float = 2.0,
+    custom_nmc_mn: float = 2.0,
+    custom_feedstock_composition: dict[str, float] | None = None,
+    custom_feedstock_composition_feedstock_type: str | None = None,
 ) -> Scenario:
     return Scenario(
         battery_manufactured=battery_manufactured,
@@ -182,6 +194,11 @@ def scenario_from_inputs(
         ),
         feedstocks=(FeedstockInput(feedstock_chemistry, feedstock_type, feedstock_tonnes_per_year),),
         recycling_flow_variant=recycling_flow_variant,
+        custom_nmc_ni=custom_nmc_ni,
+        custom_nmc_co=custom_nmc_co,
+        custom_nmc_mn=custom_nmc_mn,
+        custom_feedstock_composition=_clean_composition(custom_feedstock_composition),
+        custom_feedstock_composition_feedstock_type=custom_feedstock_composition_feedstock_type,
     )
 
 
@@ -223,6 +240,21 @@ def scenario_from_record(record: dict[str, object], fallback: Scenario) -> Scena
         feedstock_tonnes_per_year=safe_float(record.get("feedstock_tonnes_per_year"), primary.tonnes_per_year),
         recycling_process=str(record.get("recycling_process", fallback.recycling_process)),
         recycling_flow_variant=str(record.get("recycling_flow_variant", fallback.recycling_flow_variant)),
+        custom_nmc_ni=safe_float(record.get("custom_nmc_ni"), safe_float(fallback.custom_nmc_ni, 6.0)),
+        custom_nmc_co=safe_float(record.get("custom_nmc_co"), safe_float(fallback.custom_nmc_co, 2.0)),
+        custom_nmc_mn=safe_float(record.get("custom_nmc_mn"), safe_float(fallback.custom_nmc_mn, 2.0)),
+        custom_feedstock_composition=_clean_composition(
+            record.get("custom_feedstock_composition"),
+            fallback.custom_feedstock_composition,
+        ),
+        custom_feedstock_composition_feedstock_type=str(
+            record.get(
+                "custom_feedstock_composition_feedstock_type",
+                fallback.custom_feedstock_composition_feedstock_type or "",
+            )
+            or ""
+        )
+        or None,
         cathode_chemistry=str(record.get("cathode_chemistry", fallback.cathode_chemistry)),
         recycled_content=safe_float(record.get("recycled_content"), safe_float(fallback.recycled_content)),
         cathode_throughput_gwh_per_year=safe_float(
@@ -301,6 +333,7 @@ def parameter_tables_for_scenario(scenario: Scenario, process: str) -> dict[str,
         "Scenario inputs": pd.DataFrame(scenario_rows),
         "Feedstock streams": pd.DataFrame(feedstock_rows),
         "Transport distances": pd.DataFrame(transport_rows),
+        "Custom feedstock composition": custom_feedstock_composition_table(scenario),
         "Preprocessing feedstock composition": preprocessing_feedstock_composition(scenario),
         "Preprocessing product yields": preprocessing_product_outputs(scenario),
         "Black mass composition": preprocessing_black_mass_composition(scenario),
@@ -318,6 +351,26 @@ def parameter_tables_for_scenario(scenario: Scenario, process: str) -> dict[str,
         "Cathode utility prices": cathode_utility_prices(),
         "Cathode conversion costs": cathode_material_conversion_costs(),
     }
+
+
+def custom_feedstock_composition_table(scenario: Scenario) -> pd.DataFrame:
+    if not scenario.custom_feedstock_composition:
+        return pd.DataFrame(columns=["material", "custom_kg_per_kg_feedstock", "default_kg_per_kg_feedstock", "delta"])
+    feedstock_type = scenario.custom_feedstock_composition_feedstock_type or scenario.feedstock_type
+    defaults = default_custom_feedstock_composition(feedstock_type)
+    rows = []
+    for material in FEEDSTOCK_MATERIALS:
+        custom_value = safe_float(scenario.custom_feedstock_composition.get(material), defaults.get(material, 0.0))
+        default_value = defaults.get(material, 0.0)
+        rows.append(
+            {
+                "material": material,
+                "custom_kg_per_kg_feedstock": custom_value,
+                "default_kg_per_kg_feedstock": default_value,
+                "delta": custom_value - default_value,
+            }
+        )
+    return pd.DataFrame(rows)
 
 
 def calculated_result_tables(scenario: Scenario, process: str) -> dict[str, pd.DataFrame]:
@@ -366,6 +419,11 @@ def scenario_defaults_from_record(record: dict[str, object], fallback: dict[str,
         "feedstock_tonnes": "feedstock_tonnes_per_year",
         "recycling_process": "recycling_process",
         "recycling_flow_variant": "recycling_flow_variant",
+        "custom_nmc_ni": "custom_nmc_ni",
+        "custom_nmc_co": "custom_nmc_co",
+        "custom_nmc_mn": "custom_nmc_mn",
+        "custom_feedstock_composition": "custom_feedstock_composition",
+        "custom_feedstock_composition_feedstock_type": "custom_feedstock_composition_feedstock_type",
         "cathode_chemistry": "cathode_chemistry",
         "cathode_throughput": "cathode_throughput_gwh_per_year",
         "recycled_content": "recycled_content",
@@ -403,6 +461,14 @@ def safe_float(value: object, fallback: float = 0.0) -> float:
         return fallback
 
 
+def _clean_composition(
+    values: object,
+    fallback: dict[str, float] | None = None,
+) -> dict[str, float]:
+    source = values if isinstance(values, dict) else fallback if isinstance(fallback, dict) else {}
+    return {str(key): nonnegative_float(value) for key, value in source.items()}
+
+
 def nonnegative_float(value: object, fallback: float = 0.0) -> float:
     return max(0.0, safe_float(value, fallback))
 
@@ -422,6 +488,19 @@ def result_bundle_bytes(scenario: Scenario, tables: dict[str, pd.DataFrame]) -> 
 
 
 def scenario_display_table(scenario: Scenario, text: dict[str, str]) -> pd.DataFrame:
+    custom_composition = scenario.custom_feedstock_composition or {}
+    custom_rows = []
+    if custom_composition:
+        custom_rows.extend(
+            [
+                (text["custom_nmc_ratio"], f"{scenario.custom_nmc_ni:g}/{scenario.custom_nmc_co:g}/{scenario.custom_nmc_mn:g}"),
+                (
+                    text["custom_feedstock_composition_feedstock_type"],
+                    scenario.custom_feedstock_composition_feedstock_type or scenario.feedstock_type,
+                ),
+                (text["custom_feedstock_summary"], sum(custom_composition.values())),
+            ]
+        )
     rows = [
         (text["battery_manufactured"], scenario.battery_manufactured),
         (text["throughput"], scenario.throughput_gwh_per_year),
@@ -444,7 +523,7 @@ def scenario_display_table(scenario: Scenario, text: dict[str, str]) -> pd.DataF
         ),
         (text["recycler_to_cathode"], scenario.transport_distances.recycler_to_cathode_producer),
         (text["cathode_to_manufacturer"], scenario.transport_distances.cathode_producer_to_manufacturer),
-    ]
+    ] + custom_rows
     return pd.DataFrame(rows, columns=[text["field"], text["value"]])
 
 

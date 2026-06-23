@@ -29,6 +29,7 @@ from .cm_recovery import (
     cm_recovery_equipment_table,
     cm_recovery_product_outputs,
 )
+from .custom_chemistry import CUSTOM_NMC_LABEL, is_custom_nmc
 from .disassembly import (
     disassembly_cost_breakdown,
     disassembly_feedstock_table,
@@ -61,6 +62,8 @@ from .mat_conv import (
 )
 from .model import SCENARIO_PRESETS, Scenario
 from .preprocessing import (
+    FEEDSTOCK_MATERIALS,
+    default_custom_feedstock_composition,
     preprocessing_black_mass_composition,
     preprocessing_capex_summary,
     preprocessing_cost_summary,
@@ -162,6 +165,7 @@ def _render_global_parameter_page(
 
     st.title(text["global_parameters"])
     st.write(text["global_parameters_intro"])
+    _render_parameter_feedback(text)
     _render_parameter_set_manager(default_base, text)
     current_scenario = scenario_from_inputs(**st.session_state.scenario_values)
     current_process = recycling_process_key(current_scenario.recycling_process) or process_key
@@ -199,7 +203,9 @@ def _render_branch_parameter_page(scenario: Scenario, process: str | None, text:
         return
     st.title(text["production_branch_parameters"] if branch == "production" else text["recycling_branch_parameters"])
     st.write(text["branch_parameters_intro"])
+    _render_parameter_feedback(text)
     values = dict(st.session_state.scenario_values)
+    before_values = dict(values)
 
     section = st.session_state.get("active_branch_parameter_section")
     sections = _branch_parameter_sections(branch, text)
@@ -208,7 +214,14 @@ def _render_branch_parameter_page(scenario: Scenario, process: str | None, text:
         _render_branch_parameter_cards(sections, text)
     else:
         _render_branch_parameter_section(active_section, values, options, text)
+        changed_keys = _changed_scenario_keys(before_values, values)
         set_scenario_values(values)
+        if changed_keys:
+            _record_parameter_feedback(
+                text["branch_parameter_change_applied"],
+                f"{text['changed_fields']}: {', '.join(changed_keys[:6])}{' ...' if len(changed_keys) > 6 else ''}",
+            )
+            _render_parameter_feedback(text)
 
     current_scenario = scenario_from_inputs(**values)
     _render_validation(current_scenario, text)
@@ -328,6 +341,7 @@ def _render_parameter_set_manager(default_base: Scenario, text: dict[str, str]) 
         st.session_state.parameter_libraries = {}
         st.session_state.active_parameter_library = None
         set_scenario_values(preset_values(default_base, "default"))
+        _record_parameter_feedback(text["default_parameter_set_loaded"], text["result_invalidated"])
         st.success(text["default_parameter_set_loaded"])
     selected_preset = cols[1].selectbox(
         text["preset"],
@@ -341,6 +355,7 @@ def _render_parameter_set_manager(default_base: Scenario, text: dict[str, str]) 
         st.session_state.parameter_libraries = {}
         st.session_state.active_parameter_library = None
         set_scenario_values(preset_values(default_base, selected_preset))
+        _record_parameter_feedback(text["preset_parameter_set_loaded"], text["result_invalidated"])
         st.success(text["preset_parameter_set_loaded"])
 
     uploaded_scenario = st.file_uploader(
@@ -358,6 +373,7 @@ def _render_parameter_set_manager(default_base: Scenario, text: dict[str, str]) 
             set_scenario_values(scenario_values_from_record(record, default_base))
             st.session_state.parameter_libraries = {}
             st.session_state.active_parameter_library = None
+            _record_parameter_feedback(text["scenario_loaded"], text["result_invalidated"])
             st.success(text["scenario_loaded"])
         except (UnicodeDecodeError, ValueError):
             st.warning(text["scenario_invalid"])
@@ -408,6 +424,10 @@ def _render_parameter_group_editor(spec: dict[str, object], text: dict[str, str]
         stored_tables[table_key] = edited_table
         st.session_state.calculation_done = False
         _sync_parameter_table_to_scenario_values(selected_table, edited_table, text)
+        _record_parameter_feedback(
+            text["parameter_library_saved"],
+            f"{selected_table} · {text['parameter_changes_pending']}",
+        )
         st.success(text["parameter_library_saved"])
 
 
@@ -470,6 +490,27 @@ def _coerce_scenario_value(value: object, existing: object) -> object:
         except (TypeError, ValueError):
             return existing
     return "" if value is None else str(value)
+
+
+def _changed_scenario_keys(before: dict[str, object], after: dict[str, object]) -> list[str]:
+    return [key for key in sorted(set(before) | set(after)) if before.get(key) != after.get(key)]
+
+
+def _record_parameter_feedback(title: str, detail: str) -> None:
+    st.session_state.parameter_feedback = {"title": title, "detail": detail}
+
+
+def _render_parameter_feedback(text: dict[str, str]) -> None:
+    feedback = st.session_state.get("parameter_feedback")
+    if feedback:
+        st.success(f"{text['parameter_feedback_title']}: {feedback['title']}")
+        detail = str(feedback.get("detail", ""))
+        if detail:
+            st.caption(detail)
+    else:
+        st.info(text["parameter_feedback_empty"])
+    if not st.session_state.get("calculation_done", False):
+        st.warning(text["result_invalidated"])
 
 
 def _parameter_library_specs(
@@ -857,6 +898,7 @@ def _flow_actions(text: dict[str, str], *, previous_page: str) -> None:
 
 
 def _render_production_product_parameters(values: dict[str, object], options, text: dict[str, str]) -> None:
+    chemistry_options = _chemistry_options(options.chemistries)
     values["battery_manufactured"] = st.selectbox(
         text["battery_manufactured"],
         options.battery_manufactured,
@@ -864,9 +906,10 @@ def _render_production_product_parameters(values: dict[str, object], options, te
     )
     values["manufacturing_chemistry"] = st.selectbox(
         text["manufacturing_chemistry"],
-        options.chemistries,
-        index=option_index(options.chemistries, str(values["manufacturing_chemistry"])),
+        chemistry_options,
+        index=option_index(chemistry_options, str(values["manufacturing_chemistry"])),
     )
+    _render_custom_nmc_inputs(values, text, str(values["manufacturing_chemistry"]))
 
 
 def _render_production_capacity_parameters(values: dict[str, object], options, text: dict[str, str]) -> None:
@@ -883,11 +926,13 @@ def _render_production_capacity_parameters(values: dict[str, object], options, t
 
 
 def _render_production_cathode_parameters(values: dict[str, object], options, text: dict[str, str]) -> None:
+    chemistry_options = _chemistry_options(options.cathode_chemistries)
     values["cathode_chemistry"] = st.selectbox(
         text["cathode_chemistry"],
-        options.cathode_chemistries,
-        index=option_index(options.cathode_chemistries, str(values["cathode_chemistry"])),
+        chemistry_options,
+        index=option_index(chemistry_options, str(values["cathode_chemistry"])),
     )
+    _render_custom_nmc_inputs(values, text, str(values["cathode_chemistry"]))
     values["recycled_content"] = st.number_input(
         text["recycled_content"],
         min_value=0.0,
@@ -898,6 +943,7 @@ def _render_production_cathode_parameters(values: dict[str, object], options, te
 
 
 def _render_recycling_feedstock_parameters(values: dict[str, object], options, text: dict[str, str]) -> None:
+    chemistry_options = _chemistry_options(options.chemistries)
     values["battery_collected"] = st.selectbox(
         text["battery_collected"],
         options.battery_collected,
@@ -905,19 +951,138 @@ def _render_recycling_feedstock_parameters(values: dict[str, object], options, t
     )
     values["feedstock_chemistry"] = st.selectbox(
         text["feedstock_chemistry"],
-        options.chemistries,
-        index=option_index(options.chemistries, str(values["feedstock_chemistry"])),
+        chemistry_options,
+        index=option_index(chemistry_options, str(values["feedstock_chemistry"])),
     )
     values["feedstock_type"] = st.selectbox(
         text["feedstock_type"],
         options.feedstock_types,
         index=option_index(options.feedstock_types, str(values["feedstock_type"])),
     )
+    _render_custom_nmc_inputs(values, text, str(values["feedstock_chemistry"]))
+    _render_custom_feedstock_composition_inputs(values, text)
     values["feedstock_tonnes_per_year"] = st.number_input(
         text["feedstock_tonnes"],
         min_value=0.0,
         value=float(values["feedstock_tonnes_per_year"]),
     )
+
+
+def _chemistry_options(options: tuple[str, ...]) -> tuple[str, ...]:
+    return options if CUSTOM_NMC_LABEL in options else (*options, CUSTOM_NMC_LABEL)
+
+
+def _render_custom_nmc_inputs(values: dict[str, object], text: dict[str, str], selected_chemistry: str) -> None:
+    if not is_custom_nmc(selected_chemistry):
+        return
+    st.caption(text["custom_nmc_desc"])
+    cols = st.columns(3)
+    values["custom_nmc_ni"] = cols[0].number_input(
+        text["custom_nmc_ni"],
+        min_value=0.0,
+        value=float(values.get("custom_nmc_ni", 6.0)),
+        step=0.5,
+    )
+    values["custom_nmc_co"] = cols[1].number_input(
+        text["custom_nmc_co"],
+        min_value=0.0,
+        value=float(values.get("custom_nmc_co", 2.0)),
+        step=0.5,
+    )
+    values["custom_nmc_mn"] = cols[2].number_input(
+        text["custom_nmc_mn"],
+        min_value=0.0,
+        value=float(values.get("custom_nmc_mn", 2.0)),
+        step=0.5,
+    )
+    total = float(values["custom_nmc_ni"]) + float(values["custom_nmc_co"]) + float(values["custom_nmc_mn"])
+    if total <= 0:
+        st.warning(text["custom_nmc_invalid"])
+    else:
+        st.info(text["custom_nmc_inheritance"])
+
+
+def _render_custom_feedstock_composition_inputs(values: dict[str, object], text: dict[str, str]) -> None:
+    if not is_custom_nmc(str(values.get("feedstock_chemistry"))):
+        return
+    feedstock_type = str(values.get("feedstock_type", "End-of-life battery: pack"))
+    if feedstock_type == "Black mass":
+        st.info(text["custom_feedstock_black_mass_note"])
+        return
+
+    defaults = default_custom_feedstock_composition(feedstock_type)
+    current = values.get("custom_feedstock_composition")
+    current_feedstock_type = values.get("custom_feedstock_composition_feedstock_type")
+    if not isinstance(current, dict) or not current or current_feedstock_type != feedstock_type:
+        current = defaults
+        values["custom_feedstock_composition"] = defaults
+        values["custom_feedstock_composition_feedstock_type"] = feedstock_type
+    rows = [
+        {
+            text["material"]: material,
+            text["kg_per_kg_feedstock"]: float(current.get(material, defaults.get(material, 0.0))),
+            text["default_kg_per_kg_feedstock"]: float(defaults.get(material, 0.0)),
+            text["delta_from_default"]: float(current.get(material, defaults.get(material, 0.0))) - float(defaults.get(material, 0.0)),
+        }
+        for material in FEEDSTOCK_MATERIALS
+    ]
+    st.markdown(f"#### {text['custom_feedstock_composition']}")
+    st.caption(f"{text['custom_feedstock_composition_desc']} {text['custom_feedstock_basis']}: {feedstock_type}.")
+    edited = st.data_editor(
+        pd.DataFrame(rows),
+        key=f"custom_feedstock_composition_{feedstock_type}",
+        width="stretch",
+        hide_index=True,
+        column_config={
+            text["material"]: st.column_config.TextColumn(disabled=True),
+            text["kg_per_kg_feedstock"]: st.column_config.NumberColumn(
+                min_value=0.0,
+                step=0.001,
+                format="%.6f",
+            ),
+            text["default_kg_per_kg_feedstock"]: st.column_config.NumberColumn(
+                disabled=True,
+                format="%.6f",
+            ),
+            text["delta_from_default"]: st.column_config.NumberColumn(
+                disabled=True,
+                format="%+.6f",
+            ),
+        },
+    )
+    composition = {
+        str(row[text["material"]]): max(0.0, float(row[text["kg_per_kg_feedstock"]]))
+        for row in edited.to_dict("records")
+    }
+    values["custom_feedstock_composition"] = composition
+    values["custom_feedstock_composition_feedstock_type"] = feedstock_type
+    total = sum(composition.values())
+    default_total = sum(defaults.values())
+    summary_cols = st.columns(4)
+    summary_cols[0].metric(text["custom_feedstock_total"], f"{total:.6f} kg/kg")
+    summary_cols[1].metric(text["delta_from_default"], f"{total - default_total:+.6f}")
+    summary_cols[2].metric(text["active_cathode_material"], f"{composition.get('Active cathode material', 0.0):.6f}")
+    summary_cols[3].metric(text["anode_graphite"], f"{composition.get('Graphite', 0.0):.6f}")
+    if total <= 0:
+        st.warning(text["custom_feedstock_total_invalid"])
+    elif abs(total - 1.0) > 0.05:
+        st.warning(text["custom_feedstock_total_warning"])
+    action_cols = st.columns(2)
+    if action_cols[0].button(text["normalize_custom_feedstock_composition"], width="stretch"):
+        values["custom_feedstock_composition"] = _normalized_composition(composition)
+        values["custom_feedstock_composition_feedstock_type"] = feedstock_type
+        st.rerun()
+    if action_cols[1].button(text["reset_custom_feedstock_composition"], width="stretch"):
+        values["custom_feedstock_composition"] = defaults
+        values["custom_feedstock_composition_feedstock_type"] = feedstock_type
+        st.rerun()
+
+
+def _normalized_composition(composition: dict[str, float]) -> dict[str, float]:
+    total = sum(max(0.0, float(value)) for value in composition.values())
+    if total <= 0:
+        return composition
+    return {material: max(0.0, float(value)) / total for material, value in composition.items()}
 
 
 def _render_recycling_process_parameters(values: dict[str, object], options, text: dict[str, str]) -> None:

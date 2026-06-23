@@ -48,6 +48,11 @@ class Scenario:
     transport_distances: TransportDistances
     feedstocks: tuple[FeedstockInput, ...]
     recycling_flow_variant: str = "old"
+    custom_nmc_ni: float | None = 6.0
+    custom_nmc_co: float | None = 2.0
+    custom_nmc_mn: float | None = 2.0
+    custom_feedstock_composition: dict[str, float] | None = None
+    custom_feedstock_composition_feedstock_type: str | None = None
 
 
 @dataclass(frozen=True)

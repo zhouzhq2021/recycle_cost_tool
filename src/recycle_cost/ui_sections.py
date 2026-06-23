@@ -7,6 +7,7 @@ import streamlit as st
 
 from .app_services import (
     csv_bytes,
+    custom_feedstock_composition_table,
     result_bundle_bytes,
     scenario_display_table,
     scenario_json_bytes,
@@ -55,6 +56,28 @@ def format_report_table(data: pd.DataFrame) -> pd.DataFrame:
         if pd.api.types.is_numeric_dtype(table[column]):
             table[column] = table[column].map(format_report_number)
     return table
+
+
+def recycling_report_summary_table(output_summary: pd.DataFrame, active_process: str) -> pd.DataFrame:
+    output_index = output_summary.set_index("metric")
+
+    def value(metric: str) -> float:
+        try:
+            return float(output_index.loc[metric, active_process])
+        except (KeyError, TypeError, ValueError):
+            return 0.0
+
+    cost = value("Recycling cost")
+    revenue = value("Recycling revenue")
+    rows = [
+        ("Recycling cost", cost, "$/kg feedstock"),
+        ("Recycling revenue", revenue, "$/kg feedstock"),
+        ("Net recycling cost", cost - revenue, "$/kg feedstock"),
+        ("Recycling GHGs", value("Recycling GHGs"), "g CO2e/kg feedstock"),
+        ("Recycling total energy", value("Recycling total energy"), "MJ/kg feedstock"),
+        ("Recycling water", value("Recycling water"), "gal/kg feedstock"),
+    ]
+    return pd.DataFrame(rows, columns=["metric", active_process, "unit"])
 
 
 def render_report_table(title: str | None, data: pd.DataFrame, *, height: int = DEFAULT_TABLE_HEIGHT) -> None:
@@ -133,6 +156,9 @@ def render_overview_section(
 
     st.subheader(text["scenario_inputs"])
     render_table_grid([(None, scenario_display_table(scenario, text))], text, user_table)
+    custom_composition = custom_feedstock_composition_table(scenario)
+    if not custom_composition.empty:
+        render_table(text["custom_feedstock_composition_comparison"], custom_composition, text, user_table)
     st.download_button(
         text["download_scenario"],
         scenario_json_bytes(scenario),
@@ -173,7 +199,18 @@ def render_branch_report_section(scenario, result_tables, branch: str, process_k
     if branch == "production":
         _render_production_report(output_summary, manufacturing_summary, report_results, text)
     else:
-        _render_recycling_report(output_summary, stage_summary, process_stage, cost_breakdown, recycling_revenue, report_results, active_process, text)
+        _render_recycling_report(
+            scenario,
+            output_summary,
+            stage_summary,
+            process_stage,
+            cost_breakdown,
+            recycling_revenue,
+            report_results,
+            active_process,
+            text,
+            user_table,
+        )
     _render_complete_report_tables(result_tables, text)
 
 
@@ -223,6 +260,7 @@ def _render_production_report(output_summary, manufacturing_summary, report_resu
 
 
 def _render_recycling_report(
+    scenario,
     output_summary,
     stage_summary,
     process_stage,
@@ -231,13 +269,21 @@ def _render_recycling_report(
     report_results,
     active_process: str,
     text,
+    user_table,
 ) -> None:
     output_index = output_summary.set_index("metric")
     kpi_cols = st.columns(4)
     kpi_cols[0].metric(text["recycling_process"], active_process)
     kpi_cols[1].metric(text["cost"], f"{output_index.loc['Recycling cost', active_process]:.4f} $/kg")
     kpi_cols[2].metric(text["revenue"], f"{output_index.loc['Recycling revenue', active_process]:.4f} $/kg")
-    kpi_cols[3].metric("GHGs", f"{output_index.loc['Recycling GHGs', active_process]:,.2f} g CO2e/kg")
+    net_cost = output_index.loc["Recycling cost", active_process] - output_index.loc["Recycling revenue", active_process]
+    kpi_cols[3].metric(text["net_recycling_cost"], f"{net_cost:.4f} $/kg")
+    st.caption(f"GHGs: {output_index.loc['Recycling GHGs', active_process]:,.2f} g CO2e/kg")
+    with st.expander(text["scenario_inputs"], expanded=False):
+        render_table(None, scenario_display_table(scenario, text), text, user_table, height=260)
+        custom_composition = custom_feedstock_composition_table(scenario)
+        if not custom_composition.empty:
+            render_table(text["custom_feedstock_composition_comparison"], custom_composition, text, user_table, height=360)
 
     stage_table = stage_summary[
         stage_summary["stage"].isin(
@@ -263,9 +309,11 @@ def _render_recycling_report(
     recycling_output = output_summary[
         output_summary["metric"].astype(str).str.startswith(("Recycling", "Collection"))
     ][["metric", "category", "unit", "Virgin", "Pyro", "Hydro", "Direct", "Custom"]]
+    summary_table = recycling_report_summary_table(output_summary, active_process)
 
-    tab_report, tab_stage, tab_cost, tab_revenue, tab_output = st.tabs(
+    tab_summary, tab_report, tab_stage, tab_cost, tab_revenue, tab_output = st.tabs(
         [
+            text["report_key_findings"],
             text["report_sheet_summary"],
             text["stage_summary"],
             text["cost_breakdown"],
@@ -273,6 +321,8 @@ def _render_recycling_report(
             text["output_summary"],
         ]
     )
+    with tab_summary:
+        render_report_table(text["report_key_findings"], summary_table, height=260)
     with tab_report:
         render_report_table(text["recycling_report"], closed_loop_report)
     with tab_stage:
@@ -350,8 +400,11 @@ def render_disassembly_section(disassembly_weights, disassembly_costs, disassemb
 def render_preprocessing_section(scenario, preprocessing_streams, feedstock_composition, preprocessing_products, black_mass_composition, preprocessing_env, preprocessing_cost, equipment_table, capex_summary, opex_summary, text, user_table):
     st.subheader(text["preprocessing"])
     cols = st.columns(4)
+    product_index = preprocessing_products.set_index("product")
+    recovered_product = "Black mass" if "Black mass" in product_index.index else "S-Cathode" if "S-Cathode" in product_index.index else None
+    recovered_value = product_index.loc[recovered_product, "kg_per_kg_feedstock"] if recovered_product else 0.0
     cols[0].metric(text["throughput_label"], f"{preprocessing_throughput(scenario):,.1f} t/yr")
-    cols[1].metric(text["black_mass"], f"{preprocessing_products.set_index('product').loc['Black mass', 'kg_per_kg_feedstock']:.6f}")
+    cols[1].metric(recovered_product or text["black_mass"], f"{recovered_value:.6f}")
     cols[2].metric("GHGs", f"{preprocessing_env.set_index('metric').loc['GHGs', 'total']:.3f}")
     cols[3].metric(text["cost"], f"{preprocessing_cost.set_index('item').loc['Total cost ($/kg feedstock processed)', 'value']:.6f}")
     tab_a, tab_b, tab_c = st.tabs([text["materials"], text["environment"], text["equipment_capex_opex"]])

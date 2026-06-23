@@ -93,6 +93,11 @@ def preset_values(default_base: Scenario, preset_key: str) -> dict[str, object]:
         "feedstock_tonnes_per_year": nonnegative_float(preset["feedstock_tonnes"]),
         "recycling_process": str(preset["recycling_process"]),
         "recycling_flow_variant": "old",
+        "custom_nmc_ni": 6.0,
+        "custom_nmc_co": 2.0,
+        "custom_nmc_mn": 2.0,
+        "custom_feedstock_composition": {},
+        "custom_feedstock_composition_feedstock_type": None,
         "cathode_chemistry": str(preset["cathode_chemistry"]),
         "recycled_content": fraction_float(preset["recycled_content"]),
         "cathode_throughput_gwh_per_year": nonnegative_float(preset["cathode_throughput"]),
@@ -144,6 +149,9 @@ def _clean_values(values: dict[str, object]) -> dict[str, object]:
         "throughput_gwh_per_year",
         "feedstock_tonnes_per_year",
         "recycled_content",
+        "custom_nmc_ni",
+        "custom_nmc_co",
+        "custom_nmc_mn",
         "cathode_throughput_gwh_per_year",
         "collection_to_disassembly",
         "disassembly_to_preprocessor",
@@ -155,6 +163,12 @@ def _clean_values(values: dict[str, object]) -> dict[str, object]:
     cleaned = dict(values)
     for key in numeric_keys:
         cleaned[key] = fraction_float(cleaned.get(key)) if key == "recycled_content" else nonnegative_float(cleaned.get(key))
+    composition = cleaned.get("custom_feedstock_composition")
+    cleaned["custom_feedstock_composition"] = (
+        {str(material): nonnegative_float(value) for material, value in composition.items()}
+        if isinstance(composition, dict)
+        else {}
+    )
     return cleaned
 
 
