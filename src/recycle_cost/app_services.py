@@ -65,6 +65,28 @@ def scenario_validation_messages(scenario: Scenario, text: dict[str, str]) -> li
     return messages
 
 
+def synchronize_material_system_defaults(
+    values: dict[str, object],
+    *,
+    previous_values: dict[str, object] | None = None,
+    force: bool = False,
+) -> dict[str, object]:
+    synchronized = dict(values)
+    manufacturing_chemistry = synchronized.get("manufacturing_chemistry")
+    if not manufacturing_chemistry:
+        return synchronized
+
+    current_cathode = synchronized.get("cathode_chemistry")
+    previous_manufacturing = previous_values.get("manufacturing_chemistry") if previous_values else None
+    previous_cathode = previous_values.get("cathode_chemistry") if previous_values else None
+    user_overrode_cathode = bool(previous_cathode) and current_cathode != previous_cathode
+    cathode_was_following_manufacturing = not previous_values or previous_cathode in {None, "", previous_manufacturing}
+
+    if force or (not user_overrode_cathode and (not current_cathode or cathode_was_following_manufacturing)):
+        synchronized["cathode_chemistry"] = manufacturing_chemistry
+    return synchronized
+
+
 def user_table(data: pd.DataFrame) -> pd.DataFrame:
     hidden_tokens = ("workbook", "delta", "status", "source_row")
     table = data.drop(
@@ -124,6 +146,7 @@ def scenario_record(scenario: Scenario) -> dict[str, object]:
         "custom_nmc_mn": scenario.custom_nmc_mn,
         "custom_feedstock_composition": dict(scenario.custom_feedstock_composition or {}),
         "custom_feedstock_composition_feedstock_type": scenario.custom_feedstock_composition_feedstock_type,
+        "new_flow_parameters": dict(scenario.new_flow_parameters or {}),
         "cathode_chemistry": scenario.cathode_chemistry,
         "recycled_content": scenario.recycled_content,
         "cathode_throughput_gwh_per_year": scenario.cathode_throughput_gwh_per_year,
@@ -170,6 +193,7 @@ def scenario_from_inputs(
     custom_nmc_mn: float = 2.0,
     custom_feedstock_composition: dict[str, float] | None = None,
     custom_feedstock_composition_feedstock_type: str | None = None,
+    new_flow_parameters: dict[str, float] | None = None,
 ) -> Scenario:
     return Scenario(
         battery_manufactured=battery_manufactured,
@@ -199,6 +223,7 @@ def scenario_from_inputs(
         custom_nmc_mn=custom_nmc_mn,
         custom_feedstock_composition=_clean_composition(custom_feedstock_composition),
         custom_feedstock_composition_feedstock_type=custom_feedstock_composition_feedstock_type,
+        new_flow_parameters=_clean_composition(new_flow_parameters),
     )
 
 
@@ -255,6 +280,10 @@ def scenario_from_record(record: dict[str, object], fallback: Scenario) -> Scena
             or ""
         )
         or None,
+        new_flow_parameters=_clean_composition(
+            record.get("new_flow_parameters"),
+            fallback.new_flow_parameters,
+        ),
         cathode_chemistry=str(record.get("cathode_chemistry", fallback.cathode_chemistry)),
         recycled_content=safe_float(record.get("recycled_content"), safe_float(fallback.recycled_content)),
         cathode_throughput_gwh_per_year=safe_float(
@@ -424,6 +453,7 @@ def scenario_defaults_from_record(record: dict[str, object], fallback: dict[str,
         "custom_nmc_mn": "custom_nmc_mn",
         "custom_feedstock_composition": "custom_feedstock_composition",
         "custom_feedstock_composition_feedstock_type": "custom_feedstock_composition_feedstock_type",
+        "new_flow_parameters": "new_flow_parameters",
         "cathode_chemistry": "cathode_chemistry",
         "cathode_throughput": "cathode_throughput_gwh_per_year",
         "recycled_content": "recycled_content",

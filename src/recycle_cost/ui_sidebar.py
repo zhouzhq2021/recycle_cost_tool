@@ -7,6 +7,7 @@ import streamlit as st
 from .app_services import fraction_float, nonnegative_float, recycling_process_key, scenario_from_inputs
 from .i18n import TEXT
 from .model import SCENARIO_PRESETS, Scenario
+from .new_flow_parameters import new_flow_parameters_complete
 
 
 PAGE_KEYS = ("home", "global_parameters", "branch_select", "branch_parameters", "branch_flow", "module", "results")
@@ -44,18 +45,26 @@ def render_sidebar(default_base: Scenario, options) -> SidebarState:
     )
 
 
-def set_page(page: str, *, module: str | None = None, return_page: str | None = None) -> None:
+def set_page(
+    page: str,
+    *,
+    module: str | None = None,
+    return_page: str | None = None,
+    module_focus: str | None = None,
+) -> None:
     st.session_state.page = page
     if module is not None:
         st.session_state.active_module = module
     if return_page is not None:
         st.session_state.module_return_page = return_page
+    st.session_state.active_module_focus = module_focus
     st.rerun()
 
 
 def set_branch(branch: str | None) -> None:
     st.session_state.branch = branch if branch in BRANCH_KEYS else None
     st.session_state.active_branch_parameter_section = None
+    st.session_state.active_module_focus = None
     st.session_state.calculation_done = False
     st.session_state.page = "branch_parameters" if st.session_state.branch else "branch_select"
     st.rerun()
@@ -65,6 +74,17 @@ def run_calculation() -> None:
     if st.session_state.get("branch") not in BRANCH_KEYS:
         st.session_state.calculation_done = False
         st.session_state.page = "branch_select"
+    elif (
+        st.session_state.get("branch") == "recycling"
+        and not new_flow_parameters_complete(scenario_from_inputs(**st.session_state.scenario_values))
+    ):
+        st.session_state.calculation_done = False
+        st.session_state.page = "branch_parameters"
+        st.session_state.active_branch_parameter_section = "recycling_process"
+        st.session_state.parameter_feedback = {
+            "title_key": "new_flow_parameters_incomplete",
+            "detail_key": "new_flow_parameters_required_detail",
+        }
     else:
         st.session_state.calculation_done = True
         st.session_state.page = "results"
@@ -98,6 +118,7 @@ def preset_values(default_base: Scenario, preset_key: str) -> dict[str, object]:
         "custom_nmc_mn": 2.0,
         "custom_feedstock_composition": {},
         "custom_feedstock_composition_feedstock_type": None,
+        "new_flow_parameters": {},
         "cathode_chemistry": str(preset["cathode_chemistry"]),
         "recycled_content": fraction_float(preset["recycled_content"]),
         "cathode_throughput_gwh_per_year": nonnegative_float(preset["cathode_throughput"]),
@@ -137,6 +158,8 @@ def _ensure_app_state(default_base: Scenario) -> None:
         st.session_state.module_return_page = "branch_flow"
     if "active_branch_parameter_section" not in st.session_state:
         st.session_state.active_branch_parameter_section = None
+    if "active_module_focus" not in st.session_state:
+        st.session_state.active_module_focus = None
     if "recycling_flow_variant" not in st.session_state:
         st.session_state.recycling_flow_variant = "old"
     if "calculation_done" not in st.session_state:

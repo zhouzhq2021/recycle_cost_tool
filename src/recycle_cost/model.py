@@ -53,6 +53,7 @@ class Scenario:
     custom_nmc_mn: float | None = 2.0
     custom_feedstock_composition: dict[str, float] | None = None
     custom_feedstock_composition_feedstock_type: str | None = None
+    new_flow_parameters: dict[str, float] | None = None
 
 
 @dataclass(frozen=True)

@@ -16,6 +16,7 @@ from .model import FeedstockInput, Scenario, uses_new_recycling_flow
 from .parameters import workbook_number, workbook_sheet
 from .schemas import CommonColumns, ManufacturingColumns
 from .transport import _num
+from .new_flow_parameters import new_flow_parameter_value, new_flow_parameters_complete
 
 
 CHEMISTRIES = NMC_CATHODE_MATERIALS
@@ -118,15 +119,6 @@ DEFAULT_PREPROCESSING_PARAMETERS = PreprocessingParameters(
     wastewater_gal_per_kg=0.1 * 3.78541,
 )
 
-NEW_PREPROCESSING_PARAMETERS = PreprocessingParameters(
-    nitrogen_kg_per_kg=0.015,
-    diesel_mj_per_kg=0.2,
-    natural_gas_mj_per_kg=0.35,
-    electricity_mj_per_kg=0.85,
-    process_water_gal_per_kg=0.22,
-    wastewater_gal_per_kg=0.22 * 3.78541,
-)
-
 DEFAULT_PREPROCESSING_PLANT_PARAMETERS = PreprocessingPlantParameters(
     hours_per_day=24.0,
     processing_hours_per_day=20.0,
@@ -173,19 +165,6 @@ NEW_PREPROCESSING_EQUIPMENT_NAMES = (
 
 NEW_PREPROCESSING_EQUIPMENT_ALIASES = {
     "Cell Perforation": "Battery/Cell discharger",
-}
-
-NEW_PREPROCESSING_PRODUCT_YIELDS = {
-    "cathode_recovery": 0.985,
-    "anode_recovery": 0.94,
-    "carbon_black_to_anode": 0.75,
-    "aluminum_recovery": 0.92,
-    "copper_recovery": 0.92,
-    "steel_recovery": 0.94,
-    "plastics_recovery": 0.88,
-    "electrolyte_lipf6_recovery": 0.78,
-    "electrolyte_solvent_recovery": 0.82,
-    "residual_to_s_cathode": 0.015,
 }
 
 PREPROCESSING_OPEX_RATES = PreprocessingOpexRates(
@@ -246,7 +225,16 @@ def default_preprocessing_parameters() -> PreprocessingParameters:
 
 
 def preprocessing_parameters_for_scenario(scenario: Scenario) -> PreprocessingParameters:
-    return NEW_PREPROCESSING_PARAMETERS if uses_new_recycling_flow(scenario) else DEFAULT_PREPROCESSING_PARAMETERS
+    if not uses_new_recycling_flow(scenario):
+        return DEFAULT_PREPROCESSING_PARAMETERS
+    return PreprocessingParameters(
+        nitrogen_kg_per_kg=new_flow_parameter_value(scenario, "preprocessing_nitrogen_kg_per_kg", DEFAULT_PREPROCESSING_PARAMETERS.nitrogen_kg_per_kg),
+        diesel_mj_per_kg=new_flow_parameter_value(scenario, "preprocessing_diesel_mj_per_kg", DEFAULT_PREPROCESSING_PARAMETERS.diesel_mj_per_kg),
+        natural_gas_mj_per_kg=new_flow_parameter_value(scenario, "preprocessing_natural_gas_mj_per_kg", DEFAULT_PREPROCESSING_PARAMETERS.natural_gas_mj_per_kg),
+        electricity_mj_per_kg=new_flow_parameter_value(scenario, "preprocessing_electricity_mj_per_kg", DEFAULT_PREPROCESSING_PARAMETERS.electricity_mj_per_kg),
+        process_water_gal_per_kg=new_flow_parameter_value(scenario, "preprocessing_process_water_gal_per_kg", DEFAULT_PREPROCESSING_PARAMETERS.process_water_gal_per_kg),
+        wastewater_gal_per_kg=new_flow_parameter_value(scenario, "preprocessing_wastewater_gal_per_kg", DEFAULT_PREPROCESSING_PARAMETERS.wastewater_gal_per_kg),
+    )
 
 
 def default_preprocessing_plant_parameters() -> PreprocessingPlantParameters:
@@ -578,7 +566,9 @@ def preprocessing_product_outputs(scenario: Scenario) -> pd.DataFrame:
     params = preprocessing_parameters_for_scenario(scenario)
     composition = preprocessing_feedstock_composition(scenario).set_index(CommonColumns.MATERIAL)["kg_per_kg_feedstock"].to_dict()
     if uses_new_recycling_flow(scenario):
-        return _new_preprocessing_product_outputs(composition, params)
+        if not new_flow_parameters_complete(scenario):
+            return pd.DataFrame(columns=["product", "kg_per_kg_feedstock"])
+        return _new_preprocessing_product_outputs(scenario, composition, params)
     burn_mass = (
         composition.get("Graphite", 0.0)
         + composition.get("Plastic: PP", 0.0)
@@ -623,10 +613,22 @@ def preprocessing_product_outputs(scenario: Scenario) -> pd.DataFrame:
 
 
 def _new_preprocessing_product_outputs(
+    scenario: Scenario,
     composition: dict[str, float],
     params: PreprocessingParameters,
 ) -> pd.DataFrame:
-    yields = NEW_PREPROCESSING_PRODUCT_YIELDS
+    yields = {
+        "cathode_recovery": new_flow_parameter_value(scenario, "preprocessing_cathode_recovery", 0.95),
+        "anode_recovery": new_flow_parameter_value(scenario, "preprocessing_anode_recovery", 0.95),
+        "carbon_black_to_anode": new_flow_parameter_value(scenario, "preprocessing_carbon_black_to_anode"),
+        "aluminum_recovery": new_flow_parameter_value(scenario, "preprocessing_aluminum_recovery", 0.9),
+        "copper_recovery": new_flow_parameter_value(scenario, "preprocessing_copper_recovery", 0.9),
+        "steel_recovery": new_flow_parameter_value(scenario, "preprocessing_steel_recovery", 0.9),
+        "plastics_recovery": new_flow_parameter_value(scenario, "preprocessing_plastics_recovery"),
+        "electrolyte_lipf6_recovery": new_flow_parameter_value(scenario, "preprocessing_electrolyte_lipf6_recovery"),
+        "electrolyte_solvent_recovery": new_flow_parameter_value(scenario, "preprocessing_electrolyte_solvent_recovery"),
+        "residual_to_s_cathode": new_flow_parameter_value(scenario, "preprocessing_residual_to_s_cathode"),
+    }
     plastics = composition.get("Plastic: PP", 0.0) + composition.get("Plastic: PE", 0.0) + composition.get("Plastic: PET", 0.0)
     electrolyte_solvents = composition.get("Electrolyte: EC", 0.0) + composition.get("Electrolyte: DMC", 0.0)
     residual_binders = composition.get("Binder: PVDF", 0.0) + composition.get("Binder: anode", 0.0)
@@ -688,10 +690,14 @@ def preprocessing_black_mass_composition(scenario: Scenario) -> pd.DataFrame:
     values = {material: 0.0 for material in BLACK_MASS_COMPONENTS}
 
     if uses_new_recycling_flow(scenario):
-        values["Carbon black"] = composition.get("Carbon black", 0.0) * (1 - NEW_PREPROCESSING_PRODUCT_YIELDS["carbon_black_to_anode"])
+        carbon_black_to_anode = new_flow_parameter_value(scenario, "preprocessing_carbon_black_to_anode")
+        residual_to_s_cathode = new_flow_parameter_value(scenario, "preprocessing_residual_to_s_cathode")
+        cathode_recovery = new_flow_parameter_value(scenario, "preprocessing_cathode_recovery", 0.95)
+        values["Carbon black"] = composition.get("Carbon black", 0.0) * (1 - carbon_black_to_anode)
         residual_binders = composition.get("Binder: PVDF", 0.0) + composition.get("Binder: anode", 0.0)
-        values["Binder: PVDF"] = residual_binders * NEW_PREPROCESSING_PRODUCT_YIELDS["residual_to_s_cathode"]
+        values["Binder: PVDF"] = residual_binders * residual_to_s_cathode
     else:
+        cathode_recovery = 0.95
         values["Graphite"] = composition.get("Graphite", 0.0) * 0.95
         values["Carbon black"] = composition.get("Carbon black", 0.0) * 0.95
         values["Binder: PVDF"] = composition.get("Binder: PVDF", 0.0) * 0.05
@@ -704,8 +710,7 @@ def preprocessing_black_mass_composition(scenario: Scenario) -> pd.DataFrame:
         if chem in CHEMISTRIES:
             lookup = _feedstock_material_lookup(scenario, stream["feedstock_type"], chem)
             active = lookup.get("Active cathode material", 0.0)
-            recovery = NEW_PREPROCESSING_PRODUCT_YIELDS["cathode_recovery"] if uses_new_recycling_flow(scenario) else 0.95
-            values[chem] += float(stream["share"]) * active * recovery
+            values[chem] += float(stream["share"]) * active * cathode_recovery
 
     rows = []
     for component in BLACK_MASS_COMPONENTS:

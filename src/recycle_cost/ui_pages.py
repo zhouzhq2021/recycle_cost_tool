@@ -13,6 +13,7 @@ from .app_services import (
     recycling_process_key,
     scenario_from_inputs,
     scenario_validation_messages,
+    synchronize_material_system_defaults,
     user_table,
 )
 from .cathode import (
@@ -61,6 +62,7 @@ from .mat_conv import (
     mat_conv_total_summary_calculated,
 )
 from .model import SCENARIO_PRESETS, Scenario
+from .new_flow_parameters import new_flow_parameter_specs
 from .preprocessing import (
     FEEDSTOCK_MATERIALS,
     default_custom_feedstock_composition,
@@ -132,23 +134,56 @@ def render_app_pages(
     elif page == "results":
         _render_results_page(scenario, process or "Hydro", text)
     else:
-        _render_home_page(scenario, text)
+        _render_home_page(scenario, text, options)
 
 
-def _render_home_page(scenario: Scenario, text: dict[str, str]) -> None:
+def _render_home_page(scenario: Scenario, text: dict[str, str], options) -> None:
     st.title(text["initial_screen"])
     with st.container(border=True):
         st.markdown(f"### {text['start_workflow_title']}")
         st.write(text["start_workflow_intro"])
-        cols = st.columns(3)
-        cols[0].metric(text["cathode_chemistry"], scenario.cathode_chemistry)
-        cols[1].metric(text["feedstock_chemistry"], scenario.feedstock_chemistry)
-        cols[2].metric(text["manufacturing_location"], scenario.manufacturing_location)
-        action_cols = st.columns([1, 1])
-        if action_cols[0].button(text["configure_global_parameters"], type="primary", width="stretch"):
+
+        values = dict(st.session_state.scenario_values)
+        before_values = dict(values)
+        if options is not None:
+            chemistry_options = _chemistry_options(options.chemistries)
+            location_options = options.locations
+            cols = st.columns(3, gap="large")
+            values["manufacturing_chemistry"] = cols[0].selectbox(
+                text["select_preparation_material"],
+                chemistry_options,
+                index=option_index(chemistry_options, str(values["manufacturing_chemistry"])),
+                key="home_manufacturing_chemistry",
+            )
+            values["feedstock_chemistry"] = cols[1].selectbox(
+                text["select_recycling_material"],
+                chemistry_options,
+                index=option_index(chemistry_options, str(values["feedstock_chemistry"])),
+                key="home_feedstock_chemistry",
+            )
+            values["manufacturing_location"] = cols[2].selectbox(
+                text["select_region"],
+                location_options,
+                index=option_index(location_options, str(values["manufacturing_location"])),
+                key="home_manufacturing_location",
+            )
+            values = synchronize_material_system_defaults(values, previous_values=before_values)
+            if values != st.session_state.scenario_values:
+                set_scenario_values(values)
+        else:
+            cols = st.columns(3)
+            cols[0].metric(text["cathode_chemistry"], scenario.cathode_chemistry)
+            cols[1].metric(text["feedstock_chemistry"], scenario.feedstock_chemistry)
+            cols[2].metric(text["manufacturing_location"], scenario.manufacturing_location)
+
+        st.caption(text["home_global_parameter_hint"])
+        action_cols = st.columns([1, 1, 1])
+        if action_cols[0].button(text["enter_normal_preparation"], type="primary", width="stretch"):
+            set_branch("production")
+        if action_cols[1].button(text["enter_battery_recycling"], type="primary", width="stretch"):
+            set_branch("recycling")
+        if action_cols[2].button(text["configure_global_parameters"], width="stretch"):
             set_page("global_parameters")
-        if action_cols[1].button(text["select_branch"], width="stretch"):
-            set_page("branch_select")
 
 
 def _render_global_parameter_page(
@@ -206,6 +241,7 @@ def _render_branch_parameter_page(scenario: Scenario, process: str | None, text:
     _render_parameter_feedback(text)
     values = dict(st.session_state.scenario_values)
     before_values = dict(values)
+    _render_branch_setup_status(branch, values, text)
 
     section = st.session_state.get("active_branch_parameter_section")
     sections = _branch_parameter_sections(branch, text)
@@ -233,12 +269,12 @@ def _render_branch_flow_page(scenario: Scenario, process: str | None, text: dict
     if branch == "production":
         st.title(text["normal_preparation_workspace"])
         st.write(text["production_flow_intro"])
-        _render_scenario_strip(scenario, process or "Direct", text)
+        _render_scenario_strip(scenario, process or "Direct", text, branch="production")
         _render_step_cards(
             [
                 ("Cath. Prod. Par.", text["cathode_parameters_desc"], "production_cathode"),
-                ("Man Par. - cell", text["cell_manufacturing_desc"], "production_manufacturing"),
-                ("Man Par. - pack", text["pack_manufacturing_desc"], "production_manufacturing"),
+                ("Man Par. - cell", text["cell_manufacturing_desc"], "production_manufacturing", "cell"),
+                ("Man Par. - pack", text["pack_manufacturing_desc"], "production_manufacturing", "pack"),
                 ("Output", text["output_parameters_desc"], "results"),
             ],
             text,
@@ -248,7 +284,7 @@ def _render_branch_flow_page(scenario: Scenario, process: str | None, text: dict
     elif branch == "recycling":
         st.title(text["battery_recycling_workspace"])
         st.caption(text["custom_flow_hint"])
-        _render_scenario_strip(scenario, process or "Hydro", text)
+        _render_scenario_strip(scenario, process or "Hydro", text, branch="recycling")
         _render_recycling_flow_preview(process or "Hydro", st.session_state.get("recycling_flow_variant", "old"), text)
         _render_step_cards(_recycling_flow_cards(process or "Hydro", text), text, return_page="branch_flow")
     else:
@@ -262,9 +298,12 @@ def _render_branch_flow_page(scenario: Scenario, process: str | None, text: dict
 
 def _render_module_page(scenario: Scenario, process: str | None, text: dict[str, str]) -> None:
     active = st.session_state.get("active_module", "recycling_transport")
+    module_focus = st.session_state.get("active_module_focus")
+    branch = st.session_state.get("branch")
     title = _module_title(active, text)
     st.title(title)
-    _render_scenario_strip(scenario, process or "Hydro", text)
+    _render_scenario_strip(scenario, process or "Hydro", text, branch=branch)
+    _render_module_focus_note(module_focus, text)
     return_page = st.session_state.get("module_return_page", "branch_flow")
     top_actions = st.columns([1, 1, 2])
     if top_actions[0].button(text["back_to_flow"], key="module_top_back_to_flow", width="stretch"):
@@ -274,11 +313,11 @@ def _render_module_page(scenario: Scenario, process: str | None, text: dict[str,
     st.divider()
     if active.startswith("production_"):
         if active == "production_manufacturing":
-            _render_manufacturing_section(process, text)
+            _render_manufacturing_section(process, text, module_focus)
         else:
-            _render_cathode_section(scenario, process, text)
+            _render_cathode_section(scenario, process, text, module_focus)
     else:
-        _render_recycling_module(active, scenario, process, text)
+        _render_recycling_module(active, scenario, process, text, module_focus)
     _flow_actions(text, previous_page=return_page)
 
 
@@ -503,8 +542,10 @@ def _record_parameter_feedback(title: str, detail: str) -> None:
 def _render_parameter_feedback(text: dict[str, str]) -> None:
     feedback = st.session_state.get("parameter_feedback")
     if feedback:
-        st.success(f"{text['parameter_feedback_title']}: {feedback['title']}")
-        detail = str(feedback.get("detail", ""))
+        title = text.get(feedback.get("title_key", ""), feedback.get("title", ""))
+        st.success(f"{text['parameter_feedback_title']}: {title}")
+        detail = text.get(feedback.get("detail_key", ""), feedback.get("detail", ""))
+        detail = str(detail)
         if detail:
             st.caption(detail)
     else:
@@ -582,7 +623,7 @@ def _parameter_library_specs(
 
 
 def _render_step_cards(
-    cards: list[tuple[str, str, str]],
+    cards: list[tuple[str, str, str] | tuple[str, str, str, str]],
     text: dict[str, str],
     *,
     return_page: str,
@@ -590,7 +631,9 @@ def _render_step_cards(
 ) -> None:
     for start in range(0, len(cards), columns):
         cols = st.columns(columns, gap="large")
-        for offset, (col, (title, desc, target)) in enumerate(zip(cols, cards[start : start + columns], strict=False)):
+        for offset, (col, card) in enumerate(zip(cols, cards[start : start + columns], strict=False)):
+            title, desc, target = card[:3]
+            module_focus = card[3] if len(card) > 3 else None
             step_no = start + offset + 1
             with col:
                 with st.container(border=True):
@@ -601,27 +644,27 @@ def _render_step_cards(
                         if target == "results":
                             set_page("results")
                         else:
-                            set_page("module", module=target, return_page=return_page)
+                            set_page("module", module=target, return_page=return_page, module_focus=module_focus)
 
 
-def _recycling_flow_cards(process: str, text: dict[str, str]) -> list[tuple[str, str, str]]:
+def _recycling_flow_cards(process: str, text: dict[str, str]) -> list[tuple[str, str, str] | tuple[str, str, str, str]]:
     variant = st.session_state.get("recycling_flow_variant", "old")
     if variant == "new" and process == "Hydro":
         return [
-            (text["new_preprocessing"], text["new_preprocessing_desc"], "recycling_new_preprocessing"),
-            (text["post_treatment_cathode"], text["post_treatment_cathode_desc"], "recycling_cathode"),
-            (text["lithium_extraction"], text["lithium_extraction_desc"], "recycling_cm"),
-            (text["purification_coprecipitation"], text["purification_coprecipitation_desc"], "recycling_cm"),
-            (text["multi_stage_calcination"], text["multi_stage_calcination_desc"], "recycling_cathode"),
+            (text["new_preprocessing"], text["new_preprocessing_desc"], "recycling_new_preprocessing", "new_preprocessing"),
+            (text["post_treatment_cathode"], text["post_treatment_cathode_desc"], "recycling_cathode", "post_treatment_cathode"),
+            (text["lithium_extraction"], text["lithium_extraction_desc"], "recycling_cm", "lithium_extraction"),
+            (text["purification_coprecipitation"], text["purification_coprecipitation_desc"], "recycling_cm", "purification_coprecipitation"),
+            (text["multi_stage_calcination"], text["multi_stage_calcination_desc"], "recycling_cathode", "multi_stage_calcination"),
             (text["new_flow_output"], text["output_parameters_desc"], "results"),
         ]
     if variant == "new" and process == "Direct":
         return [
-            (text["new_preprocessing"], text["new_preprocessing_desc"], "recycling_new_preprocessing"),
-            (text["post_treatment_cathode"], text["post_treatment_cathode_desc"], "recycling_cathode"),
-            (text["direct_molten_salt"], text["direct_molten_salt_desc"], "recycling_cm"),
-            (text["direct_chemical_etching"], text["direct_chemical_etching_desc"], "recycling_cm"),
-            (text["direct_re_lithiation"], text["direct_re_lithiation_desc"], "recycling_cathode"),
+            (text["new_preprocessing"], text["new_preprocessing_desc"], "recycling_new_preprocessing", "new_preprocessing"),
+            (text["post_treatment_cathode"], text["post_treatment_cathode_desc"], "recycling_cathode", "post_treatment_cathode"),
+            (text["direct_molten_salt"], text["direct_molten_salt_desc"], "recycling_cm", "direct_molten_salt"),
+            (text["direct_chemical_etching"], text["direct_chemical_etching_desc"], "recycling_cm", "direct_chemical_etching"),
+            (text["direct_re_lithiation"], text["direct_re_lithiation_desc"], "recycling_cathode", "direct_re_lithiation"),
             (text["new_flow_output"], text["output_parameters_desc"], "results"),
         ]
     return [
@@ -630,8 +673,8 @@ def _recycling_flow_cards(process: str, text: dict[str, str]) -> list[tuple[str,
         ("Preproc. Par.", text["preprocessing_parameters_desc"], "recycling_preprocessing"),
         ("CM Rec Par.", text["cm_recovery_parameters_desc"], "recycling_cm"),
         ("Cath. Prod. Par.", text["cathode_parameters_desc"], "recycling_cathode"),
-        ("Man Par. - cell", text["cell_manufacturing_desc"], "recycling_manufacturing"),
-        ("Man Par. - pack", text["pack_manufacturing_desc"], "recycling_manufacturing"),
+        ("Man Par. - cell", text["cell_manufacturing_desc"], "recycling_manufacturing", "cell"),
+        ("Man Par. - pack", text["pack_manufacturing_desc"], "recycling_manufacturing", "pack"),
         ("Mat. Conv Par.", text["mat_conversion_parameters_desc"], "recycling_matconv"),
         ("Output", text["output_parameters_desc"], "results"),
     ]
@@ -712,7 +755,43 @@ def _render_branch_parameter_section(
         _render_recycling_transport_parameters(values, text)
 
 
-def _render_recycling_module(active: str, scenario: Scenario, process: str | None, text: dict[str, str]) -> None:
+def _render_branch_setup_status(branch: str, values: dict[str, object], text: dict[str, str]) -> None:
+    rows = _branch_setup_status_rows(branch, values, text)
+    frame = pd.DataFrame(rows)
+    st.markdown(f"### {text['branch_setup_status']}")
+    st.dataframe(frame, width="stretch", hide_index=True, height=180)
+
+
+def _branch_setup_status_rows(branch: str, values: dict[str, object], text: dict[str, str]) -> list[dict[str, str]]:
+    def ready_row(item: str, value: object, ready: bool) -> dict[str, str]:
+        return {
+            text["setup_item"]: item,
+            text["setup_value"]: "" if value is None else str(value),
+            text["setup_status"]: text["setup_ready"] if ready else text["setup_review"],
+        }
+
+    if branch == "production":
+        return [
+            ready_row(text["manufacturing_chemistry"], values.get("manufacturing_chemistry"), bool(values.get("manufacturing_chemistry"))),
+            ready_row(text["cathode_chemistry"], values.get("cathode_chemistry"), bool(values.get("cathode_chemistry"))),
+            ready_row(text["throughput"], values.get("throughput_gwh_per_year"), float(values.get("throughput_gwh_per_year") or 0) > 0),
+            ready_row(text["cathode_throughput"], values.get("cathode_throughput_gwh_per_year"), float(values.get("cathode_throughput_gwh_per_year") or 0) >= 0),
+        ]
+    return [
+        ready_row(text["feedstock_chemistry"], values.get("feedstock_chemistry"), bool(values.get("feedstock_chemistry"))),
+        ready_row(text["feedstock_type"], values.get("feedstock_type"), str(values.get("feedstock_type", "")).strip() not in {"", "Select Type"}),
+        ready_row(text["feedstock_tonnes"], values.get("feedstock_tonnes_per_year"), float(values.get("feedstock_tonnes_per_year") or 0) > 0),
+        ready_row(text["recycling_process"], values.get("recycling_process"), recycling_process_key(str(values.get("recycling_process", ""))) is not None),
+    ]
+
+
+def _render_recycling_module(
+    active: str,
+    scenario: Scenario,
+    process: str | None,
+    text: dict[str, str],
+    module_focus: str | None,
+) -> None:
     if active == "recycling_disassembly":
         render_disassembly_section(
             disassembly_weight_summary(scenario),
@@ -750,6 +829,7 @@ def _render_recycling_module(active: str, scenario: Scenario, process: str | Non
             cm_recovery_equipment_table(scenario, process),
             text,
             user_table,
+            module_focus=module_focus,
         )
     elif active == "recycling_matconv":
         render_mat_conversion_section(
@@ -766,9 +846,9 @@ def _render_recycling_module(active: str, scenario: Scenario, process: str | Non
             user_table,
         )
     elif active == "recycling_cathode":
-        _render_cathode_section(scenario, process, text)
+        _render_cathode_section(scenario, process, text, module_focus)
     elif active == "recycling_manufacturing":
-        _render_manufacturing_section(process, text)
+        _render_manufacturing_section(process, text, module_focus)
     else:
         transport_segments = scenario_transport_segments(scenario)
         render_transport_section(
@@ -837,7 +917,30 @@ def _render_new_preprocessing_section(scenario: Scenario, text: dict[str, str]) 
         )
 
 
-def _render_cathode_section(scenario: Scenario, process: str | None, text: dict[str, str]) -> None:
+def _render_module_focus_note(module_focus: str | None, text: dict[str, str]) -> None:
+    if not module_focus:
+        return
+    label = text.get(f"module_focus_{module_focus}", module_focus)
+    st.info(f"{text['current_module_focus']}: {label}")
+    shared_model_focuses = {
+        "lithium_extraction",
+        "purification_coprecipitation",
+        "direct_molten_salt",
+        "direct_chemical_etching",
+        "direct_re_lithiation",
+        "post_treatment_cathode",
+        "multi_stage_calcination",
+    }
+    if module_focus in shared_model_focuses:
+        st.caption(text["shared_module_model_note"])
+
+
+def _render_cathode_section(
+    scenario: Scenario,
+    process: str | None,
+    text: dict[str, str],
+    module_focus: str | None = None,
+) -> None:
     chemistry = cathode_chemistry_for_scenario(scenario)
     render_cathode_section(
         scenario,
@@ -849,10 +952,11 @@ def _render_cathode_section(scenario: Scenario, process: str | None, text: dict[
         cathode_cost_per_line_summary(chemistry),
         text,
         user_table,
+        module_focus=module_focus,
     )
 
 
-def _render_manufacturing_section(process: str | None, text: dict[str, str]) -> None:
+def _render_manufacturing_section(process: str | None, text: dict[str, str], module_focus: str | None = None) -> None:
     render_manufacturing_section(
         manufacturing_cell_cost_summary(),
         manufacturing_cell_environment_summary(),
@@ -872,6 +976,7 @@ def _render_manufacturing_section(process: str | None, text: dict[str, str]) -> 
         process or "Direct",
         text,
         user_table,
+        module_focus=module_focus,
     )
 
 
@@ -909,6 +1014,7 @@ def _render_production_product_parameters(values: dict[str, object], options, te
         chemistry_options,
         index=option_index(chemistry_options, str(values["manufacturing_chemistry"])),
     )
+    values.update(synchronize_material_system_defaults(values, previous_values=dict(st.session_state.scenario_values)))
     _render_custom_nmc_inputs(values, text, str(values["manufacturing_chemistry"]))
 
 
@@ -1107,11 +1213,64 @@ def _render_recycling_process_parameters(values: dict[str, object], options, tex
             st.session_state.calculation_done = False
         values["recycling_flow_variant"] = selected_variant
         st.caption(text["new_flow_calculation_note"])
+        if selected_variant == "new":
+            _render_new_flow_parameter_inputs(values, process_key, text)
         _render_flow_comparison_images(process_key, selected_variant, text)
     else:
         st.session_state.recycling_flow_variant = "old"
         values["recycling_flow_variant"] = "old"
         st.info(text["flow_variant_only_hydro_direct"])
+
+
+def _render_new_flow_parameter_inputs(values: dict[str, object], process_key: str, text: dict[str, str]) -> None:
+    st.markdown(f"#### {text['new_flow_user_parameters']}")
+    st.caption(text["new_flow_user_parameters_desc"])
+    current = values.get("new_flow_parameters")
+    current_values = dict(current) if isinstance(current, dict) else {}
+    rows = []
+    for spec in new_flow_parameter_specs(process_key):
+        value = current_values.get(spec.key, spec.default_value)
+        rows.append(
+            {
+                "key": spec.key,
+                text["new_flow_parameter"]: text[spec.label_key],
+                text["unit"]: spec.unit,
+                text["new_flow_value"]: value,
+                text["new_flow_default_source"]: text[spec.source_key],
+                text["new_flow_required"]: text["yes"] if spec.required else text["no"],
+            }
+        )
+    edited = st.data_editor(
+        pd.DataFrame(rows),
+        key=f"new_flow_parameters_{process_key}",
+        width="stretch",
+        hide_index=True,
+        column_config={
+            "key": st.column_config.TextColumn(disabled=True),
+            text["new_flow_parameter"]: st.column_config.TextColumn(disabled=True),
+            text["unit"]: st.column_config.TextColumn(disabled=True),
+            text["new_flow_default_source"]: st.column_config.TextColumn(disabled=True),
+            text["new_flow_required"]: st.column_config.TextColumn(disabled=True),
+            text["new_flow_value"]: st.column_config.NumberColumn(min_value=0.0, step=0.001, format="%.6f"),
+        },
+        num_rows="fixed",
+    )
+    new_values: dict[str, float] = {}
+    missing = []
+    specs_by_key = {spec.key: spec for spec in new_flow_parameter_specs(process_key)}
+    for row in edited.to_dict("records"):
+        key = str(row["key"])
+        value = row.get(text["new_flow_value"])
+        if value is None or pd.isna(value):
+            if specs_by_key[key].required:
+                missing.append(text[specs_by_key[key].label_key])
+            continue
+        new_values[key] = float(value)
+    values["new_flow_parameters"] = new_values
+    if missing:
+        st.warning(f"{text['new_flow_missing_parameters']}: {', '.join(missing[:6])}{' ...' if len(missing) > 6 else ''}")
+    else:
+        st.success(text["new_flow_parameters_ready"])
 
 
 def _render_flow_comparison_images(process_key: str, selected_variant: str, text: dict[str, str]) -> None:
@@ -1196,9 +1355,21 @@ def _module_title(module: str, text: dict[str, str]) -> str:
     return labels.get(module, text["process_flow"])
 
 
-def _render_scenario_strip(scenario: Scenario, process_key: str, text: dict[str, str]) -> None:
+def _render_scenario_strip(
+    scenario: Scenario,
+    process_key: str,
+    text: dict[str, str],
+    *,
+    branch: str | None = None,
+) -> None:
     cols = st.columns(4)
-    cols[0].metric(text["cathode_chemistry"], scenario.cathode_chemistry)
+    if branch == "production":
+        cols[0].metric(text["manufacturing_chemistry"], scenario.manufacturing_chemistry)
+        cols[1].metric(text["cathode_chemistry"], scenario.cathode_chemistry)
+        cols[2].metric(text["manufacturing_location"], scenario.manufacturing_location)
+        cols[3].metric(text["throughput_label"], f"{scenario.throughput_gwh_per_year:,.2f} GWh/yr")
+        return
+    cols[0].metric(text["feedstock_chemistry"], scenario.feedstock_chemistry)
     cols[1].metric(text["recycling_process"], process_key)
     cols[2].metric(text["manufacturing_location"], scenario.manufacturing_location)
     cols[3].metric(text["feedstock_label"], f"{scenario.feedstock_tonnes_per_year:,.0f} t/yr")

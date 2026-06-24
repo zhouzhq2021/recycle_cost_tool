@@ -80,6 +80,45 @@ def recycling_report_summary_table(output_summary: pd.DataFrame, active_process:
     return pd.DataFrame(rows, columns=["metric", active_process, "unit"])
 
 
+def selected_recycling_route_report_table(
+    output_summary: pd.DataFrame,
+    active_process: str,
+    recycling_revenue: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    summary = recycling_report_summary_table(output_summary, active_process).set_index("metric")
+
+    def metric_value(metric: str) -> float:
+        try:
+            return float(summary.loc[metric, active_process])
+        except (KeyError, TypeError, ValueError):
+            return 0.0
+
+    rows = [
+        {"section": "Economics", "item": "Cost", "value": metric_value("Recycling cost"), "unit": "$/kg feedstock"},
+        {"section": "Economics", "item": "Revenue", "value": metric_value("Recycling revenue"), "unit": "$/kg feedstock"},
+        {"section": "Economics", "item": "Net cost", "value": metric_value("Net recycling cost"), "unit": "$/kg feedstock"},
+        {"section": "Environment", "item": "GHGs", "value": metric_value("Recycling GHGs"), "unit": "g CO2e/kg feedstock"},
+        {"section": "Environment", "item": "Total energy", "value": metric_value("Recycling total energy"), "unit": "MJ/kg feedstock"},
+        {"section": "Environment", "item": "Water", "value": metric_value("Recycling water"), "unit": "gal/kg feedstock"},
+    ]
+
+    if recycling_revenue is not None and not recycling_revenue.empty:
+        route_revenue = recycling_revenue[recycling_revenue["process"].eq(active_process)].copy()
+        if not route_revenue.empty:
+            value_column = "python_value" if "python_value" in route_revenue.columns else "value"
+            top_products = route_revenue.sort_values(value_column, ascending=False).head(3)
+            for row in top_products.to_dict("records"):
+                rows.append(
+                    {
+                        "section": "Recovered products",
+                        "item": str(row.get("material", "")),
+                        "value": float(row.get(value_column, 0.0) or 0.0),
+                        "unit": "$/kg feedstock revenue contribution",
+                    }
+                )
+    return pd.DataFrame(rows)
+
+
 def recycling_route_comparison_table(output_summary: pd.DataFrame) -> pd.DataFrame:
     output_index = output_summary.set_index("metric")
     routes = ["Pyro", "Hydro", "Direct", "Custom"]
@@ -110,6 +149,16 @@ def production_report_summary_table(output_summary: pd.DataFrame) -> pd.DataFram
         ("Cell manufacturing GHGs", _output_metric_value(output_index, "Cell manufacturing GHGs", "Virgin"), "g CO2e/kWh"),
     ]
     return pd.DataFrame(rows, columns=["metric", "Virgin", "unit"])
+
+
+def production_report_display_table(report_results: pd.DataFrame) -> pd.DataFrame:
+    return report_results[report_results["section"] == "Manufacturing"][["metric", "Virgin Manufacture"]]
+
+
+def production_output_display_table(output_summary: pd.DataFrame) -> pd.DataFrame:
+    return output_summary[
+        output_summary["metric"].astype(str).str.startswith("Cell manufacturing")
+    ][["metric", "category", "unit", "Virgin"]]
 
 
 def model_benchmark_policy_table(is_new_flow: bool) -> pd.DataFrame:
@@ -189,6 +238,12 @@ def _output_metric_value(output_index: pd.DataFrame, metric: str, column: str) -
         return float(value)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _battery_production_cost_column(active_process: str) -> str:
+    if active_process == "Direct":
+        return "reclaimed materials from direct"
+    return f"recycled materials from {active_process.lower()}"
 
 
 def route_comparison_chart(route_comparison: pd.DataFrame, value_column: str, title: str) -> alt.Chart:
@@ -329,7 +384,7 @@ def render_branch_report_section(scenario, result_tables, branch: str, process_k
     active_process = process_key if process_key in PROCESS_LABELS else "Hydro"
 
     _render_report_header(scenario, branch, active_process, text)
-    is_new_flow = getattr(scenario, "recycling_flow_variant", "old") == "new"
+    is_new_flow = branch == "recycling" and getattr(scenario, "recycling_flow_variant", "old") == "new"
     benchmark_policy = model_benchmark_policy_table(is_new_flow)
     benchmark_diagnostics = model_benchmark_diagnostics_table(output_summary, active_process, is_new_flow)
     with st.expander(text["model_benchmark_policy"], expanded=False):
@@ -370,20 +425,12 @@ def _render_production_report(output_summary, manufacturing_summary, report_resu
     kpi_cols[2].metric(text["water"], f"{output_index.loc['Cell manufacturing water', 'Virgin']:.2f} gal/kWh")
     kpi_cols[3].metric("GHGs", f"{output_index.loc['Cell manufacturing GHGs', 'Virgin']:,.2f} g CO2e/kWh")
 
-    report_table = report_results[report_results["section"] == "Manufacturing"][
-        ["metric", "Virgin Manufacture", "Pyro", "Hydro", "Direct", "Custom"]
-    ]
-    output_table = output_summary[
-        output_summary["metric"].astype(str).str.startswith("Cell manufacturing")
-    ][["metric", "category", "unit", "Virgin", "Pyro", "Hydro", "Direct", "Custom"]]
+    report_table = production_report_display_table(report_results)
+    output_table = production_output_display_table(output_summary)
     manufacturing_columns = [
         "metric",
         "python_virgin_cell",
         "python_virgin_pack",
-        "python_recycled_pyro",
-        "python_recycled_hydro",
-        "python_recycled_direct",
-        "python_recycled_custom",
     ]
     manufacturing_table = manufacturing_summary[[column for column in manufacturing_columns if column in manufacturing_summary.columns]]
     production_summary = production_report_summary_table(output_summary)
@@ -443,7 +490,7 @@ def _render_recycling_report(
         )
         | (
             cost_breakdown["section"].eq("Battery production cost")
-            & cost_breakdown["column"].isin(["Selected", f"recycled materials from {active_process.lower()}"])
+            & cost_breakdown["column"].isin(["Selected", _battery_production_cost_column(active_process)])
         )
     ]
     revenue_table = recycling_revenue[recycling_revenue["process"].eq(active_process)]
@@ -452,11 +499,13 @@ def _render_recycling_report(
         output_summary["metric"].astype(str).str.startswith(("Recycling", "Collection"))
     ][["metric", "category", "unit", "Virgin", "Pyro", "Hydro", "Direct", "Custom"]]
     summary_table = recycling_report_summary_table(output_summary, active_process)
+    selected_route_table = selected_recycling_route_report_table(output_summary, active_process, recycling_revenue)
     route_comparison = recycling_route_comparison_table(output_summary)
 
-    tab_summary, tab_report, tab_stage, tab_cost, tab_revenue, tab_output = st.tabs(
+    tab_summary, tab_compare, tab_report, tab_stage, tab_cost, tab_revenue, tab_output = st.tabs(
         [
             text["report_key_findings"],
+            text["route_comparison"],
             text["report_sheet_summary"],
             text["stage_summary"],
             text["cost_breakdown"],
@@ -466,6 +515,9 @@ def _render_recycling_report(
     )
     with tab_summary:
         render_report_table(text["report_key_findings"], summary_table, height=260)
+        render_report_table(text["selected_route_report"], selected_route_table, height=320)
+        render_report_table(text["selected_route_stage_summary"], stage_table, height=300)
+    with tab_compare:
         chart_cols = st.columns(2, gap="medium")
         with chart_cols[0]:
             st.altair_chart(route_comparison_chart(route_comparison, "net_cost", text["net_recycling_cost"]), width="stretch")
@@ -575,7 +627,17 @@ def render_preprocessing_section(scenario, preprocessing_streams, feedstock_comp
         render_table_grid([(text["capex"], capex_summary), (text["opex"], opex_summary, DEFAULT_TABLE_HEIGHT)], text, user_table)
 
 
-def render_cm_recovery_section(scenario, process, cm_cost, cm_products, cm_capex, equipment_table, text, user_table):
+def render_cm_recovery_section(
+    scenario,
+    process,
+    cm_cost,
+    cm_products,
+    cm_capex,
+    equipment_table,
+    text,
+    user_table,
+    module_focus: str | None = None,
+):
     st.subheader(text["cm_recovery"])
     if process in {"Pyro", "Hydro", "Direct"}:
         cols = st.columns(4)
@@ -583,6 +645,14 @@ def render_cm_recovery_section(scenario, process, cm_cost, cm_products, cm_capex
         cols[1].metric(text["throughput_label"], f"{cm_recovery_throughput(scenario):,.1f} t/yr")
         cols[2].metric(text["cost"], f"{cm_cost.set_index('item').loc['Total cost ($/kg black mass processed)', 'value']:.6f}")
         cols[3].metric(text["fixed_capital"], f"{cm_capex.set_index('item').loc['Fixed capital investment', 'value']:,.0f}")
+        if module_focus in {
+            "lithium_extraction",
+            "purification_coprecipitation",
+            "direct_molten_salt",
+            "direct_chemical_etching",
+        }:
+            st.markdown(f"**{text['focused_module_preview']}**")
+            render_table_grid([(text["products"], cm_products), (text["cost_summary"], cm_cost)], text, user_table)
         render_table_grid([(text["cost_summary"], cm_cost), (text["products"], cm_products)], text, user_table)
         render_table(text["equipment"], equipment_table, text, user_table)
         render_table_grid([(text["capex"], cm_capex)], text, user_table)
@@ -647,6 +717,7 @@ def render_cathode_section(
     cathode_cost_summary,
     text,
     user_table,
+    module_focus: str | None = None,
 ):
     st.subheader(text["cathode"])
     cathode_chemistry = cathode_chemistry_for_scenario(scenario)
@@ -662,6 +733,13 @@ def render_cathode_section(
     
     water_val = cathode_virgin_env.set_index("metric").loc["Water consumption: gal/kg", "virgin_total"]
     cols[3].metric(text["water"], f"{water_val:.3f} gal/kg")
+
+    if module_focus in {"post_treatment_cathode", "multi_stage_calcination", "direct_re_lithiation"}:
+        st.markdown(f"**{text['focused_module_preview']}**")
+        if module_focus == "multi_stage_calcination":
+            render_table_grid([(text["cathode_cost"], cathode_cost_summary, COMPACT_TABLE_HEIGHT)], text, user_table)
+        else:
+            render_table_grid([(text["cathode_demand"], cathode_demand, COMPACT_TABLE_HEIGHT)], text, user_table)
 
     tab_demand, tab_raw, tab_cost = st.tabs([text["cathode_demand"], text["raw_material_costs"], text["cathode_cost"]])
     with tab_demand:
@@ -695,6 +773,7 @@ def render_manufacturing_section(
     selected_rec_process,
     text,
     user_table,
+    module_focus: str | None = None,
 ):
     st.subheader(text["manufacturing"])
     cols = st.columns(4)
@@ -702,6 +781,16 @@ def render_manufacturing_section(
     cols[1].metric(text["virgin_ghgs"], f"{virgin_env.set_index('metric').loc['GHGs', 'total']:.3f}")
     cols[2].metric(text["pack_mass"], f"{pack_mass.set_index('item').loc['Pack', 'kg']:.3f} kg")
     cols[3].metric(text["recycled_energy"], f"{recycled_env.set_index('metric').loc['Total Energy', 'energy_inputs']:.6f}")
+    if module_focus == "cell":
+        st.markdown(f"**{text['focused_module_preview']}**")
+        render_table_grid([(text["model_parameters"], gen_inputs), (text["cell"], cell_size)], text, user_table)
+    elif module_focus == "pack":
+        st.markdown(f"**{text['focused_module_preview']}**")
+        render_table_grid(
+            [(text["cell"], module_masses), (text["pack"], pack_component_masses), (text["pack_mass"], pack_mass)],
+            text,
+            user_table,
+        )
     tab_a, tab_b, tab_c = st.tabs([text["cell"], text["recycled_cell"], text["pack"]])
     with tab_a:
         render_table_grid([(text["model_parameters"], gen_inputs), (text["cell"], cell_size)], text, user_table)

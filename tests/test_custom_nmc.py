@@ -10,6 +10,7 @@ from recycle_cost.app_services import (
 )
 from recycle_cost.cm_recovery import cm_recovery_product_outputs
 from recycle_cost.model import FeedstockInput, Scenario, get_scenario_from_preset
+from recycle_cost.new_flow_parameters import new_flow_parameters_complete, new_flow_parameter_specs
 from recycle_cost.preprocessing import (
     default_custom_feedstock_composition,
     preprocessing_black_mass_composition,
@@ -32,6 +33,15 @@ def _custom_nmc_scenario(**overrides) -> Scenario:
     }
     values.update(overrides)
     return Scenario(**values)
+
+
+def _complete_new_flow_parameters(process: str, **overrides) -> dict[str, float]:
+    values = {
+        spec.key: (spec.default_value if spec.default_value is not None else 0.9)
+        for spec in new_flow_parameter_specs(process)
+    }
+    values.update(overrides)
+    return values
 
 
 def test_scenario_inputs_and_record_preserve_custom_nmc_ratio():
@@ -98,11 +108,26 @@ def test_custom_nmc_hydro_products_follow_user_ratio():
 
 
 def test_custom_nmc_new_direct_outputs_rejuvenated_custom_material():
-    scenario = _custom_nmc_scenario(recycling_process="Direct", recycling_flow_variant="new")
+    incomplete = _custom_nmc_scenario(recycling_process="Direct", recycling_flow_variant="new")
+    assert new_flow_parameters_complete(incomplete) is False
+    assert cm_recovery_product_outputs(incomplete, "Direct").empty
+
+    scenario = _custom_nmc_scenario(
+        recycling_process="Direct",
+        recycling_flow_variant="new",
+        new_flow_parameters=_complete_new_flow_parameters(
+            "Direct",
+            preprocessing_cathode_recovery=0.985,
+            direct_rejuvenated_cathode_recovery=0.9,
+        ),
+    )
+    s_cathode = preprocessing_black_mass_composition(scenario).set_index("component")
     products = cm_recovery_product_outputs(scenario, "Direct").set_index("product")
 
     assert "Rejuvenated Custom NMC" in products.index
-    assert products.loc["Rejuvenated Custom NMC", "kg_per_kg_black_mass"] == pytest.approx(0.964413)
+    assert products.loc["Rejuvenated Custom NMC", "kg_per_kg_black_mass"] == pytest.approx(
+        s_cathode.loc["Custom NMC", "fraction_of_black_mass"] * 0.9
+    )
 
 
 def test_custom_feedstock_composition_replaces_nmc622_baseline():
@@ -148,7 +173,18 @@ def test_custom_feedstock_composition_changes_new_preprocessing_outputs():
         "Binder: PVDF": 0.0,
         "Binder: anode": 0.0,
     }
-    scenario = _custom_nmc_scenario(recycling_process="Direct", recycling_flow_variant="new", custom_feedstock_composition=composition)
+    scenario = _custom_nmc_scenario(
+        recycling_process="Direct",
+        recycling_flow_variant="new",
+        custom_feedstock_composition=composition,
+        new_flow_parameters=_complete_new_flow_parameters(
+            "Direct",
+            preprocessing_cathode_recovery=0.985,
+            preprocessing_anode_recovery=0.94,
+            preprocessing_carbon_black_to_anode=0.75,
+            preprocessing_residual_to_s_cathode=0.015,
+        ),
+    )
     products = preprocessing_product_outputs(scenario).set_index("product")
 
     assert products.loc["S-Cathode", "kg_per_kg_feedstock"] == pytest.approx(0.4 * 0.985 + 0.02 * 0.25)

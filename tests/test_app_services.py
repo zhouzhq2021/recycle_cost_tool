@@ -15,6 +15,7 @@ from recycle_cost.app_services import (
     scenario_json_bytes,
     scenario_record,
     scenario_validation_messages,
+    synchronize_material_system_defaults,
     user_table,
 )
 from recycle_cost.model import Scenario, default_scenario
@@ -90,6 +91,24 @@ def test_scenario_from_inputs_maps_feedstock_and_transport_fields():
     assert scenario.feedstocks[0].tonnes_per_year == 123.0
     assert scenario.transport_distances.collection_to_disassembly == 1.0
     assert scenario.transport_distances.cathode_producer_to_manufacturer == 6.0
+
+
+def test_synchronize_material_system_defaults_tracks_unoverridden_cathode():
+    previous = {"manufacturing_chemistry": "NMC(622)", "cathode_chemistry": "NMC(622)"}
+    values = {"manufacturing_chemistry": "NMC(811)", "cathode_chemistry": "NMC(622)"}
+
+    synchronized = synchronize_material_system_defaults(values, previous_values=previous)
+
+    assert synchronized["cathode_chemistry"] == "NMC(811)"
+
+
+def test_synchronize_material_system_defaults_preserves_user_cathode_override():
+    previous = {"manufacturing_chemistry": "NMC(622)", "cathode_chemistry": "NMC(622)"}
+    values = {"manufacturing_chemistry": "NMC(811)", "cathode_chemistry": "LFP"}
+
+    synchronized = synchronize_material_system_defaults(values, previous_values=previous)
+
+    assert synchronized["cathode_chemistry"] == "LFP"
 
 
 def test_scenario_from_record_preserves_multiple_feedstocks():

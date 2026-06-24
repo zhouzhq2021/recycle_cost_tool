@@ -1,13 +1,17 @@
 import pandas as pd
 
 from recycle_cost.ui_sections import (
+    _battery_production_cost_column,
     format_report_number,
     format_report_table,
     model_benchmark_policy_table,
     model_benchmark_diagnostics_table,
     production_report_summary_table,
+    production_output_display_table,
+    production_report_display_table,
     recycling_report_summary_table,
     recycling_route_comparison_table,
+    selected_recycling_route_report_table,
 )
 
 
@@ -43,6 +47,32 @@ def test_recycling_report_summary_table_includes_net_cost():
     assert summary.loc["Recycling GHGs", "unit"] == "g CO2e/kg feedstock"
 
 
+def test_selected_recycling_route_report_table_includes_route_metrics_and_products():
+    output = pd.DataFrame(
+        [
+            {"metric": "Recycling cost", "Hydro": 10.0},
+            {"metric": "Recycling revenue", "Hydro": 2.5},
+            {"metric": "Recycling GHGs", "Hydro": 100.0},
+            {"metric": "Recycling total energy", "Hydro": 4.0},
+            {"metric": "Recycling water", "Hydro": 0.2},
+        ]
+    )
+    revenue = pd.DataFrame(
+        [
+            {"process": "Hydro", "material": "Ni2+ in product", "python_value": 1.5},
+            {"process": "Hydro", "material": "Co2+ in product", "python_value": 1.0},
+            {"process": "Direct", "material": "Rejuvenated NMC(622)", "python_value": 9.0},
+        ]
+    )
+
+    report = selected_recycling_route_report_table(output, "Hydro", revenue).set_index(["section", "item"])
+
+    assert report.loc[("Economics", "Net cost"), "value"] == 7.5
+    assert report.loc[("Environment", "GHGs"), "value"] == 100.0
+    assert report.loc[("Recovered products", "Ni2+ in product"), "value"] == 1.5
+    assert ("Recovered products", "Rejuvenated NMC(622)") not in report.index
+
+
 def test_recycling_route_comparison_table_includes_all_routes_and_net_cost():
     output = pd.DataFrame(
         [
@@ -61,6 +91,11 @@ def test_recycling_route_comparison_table_includes_all_routes_and_net_cost():
     assert comparison.loc["Custom", "ghgs"] == 70.0
 
 
+def test_battery_production_cost_column_uses_direct_reclaimed_label():
+    assert _battery_production_cost_column("Hydro") == "recycled materials from hydro"
+    assert _battery_production_cost_column("Direct") == "reclaimed materials from direct"
+
+
 def test_production_report_summary_table_extracts_virgin_metrics():
     output = pd.DataFrame(
         [
@@ -75,6 +110,29 @@ def test_production_report_summary_table_extracts_virgin_metrics():
 
     assert summary.loc["Cell manufacturing cost", "Virgin"] == 101.0
     assert summary.loc["Cell manufacturing GHGs", "unit"] == "g CO2e/kWh"
+
+
+def test_production_display_tables_hide_recycling_route_columns():
+    output = pd.DataFrame(
+        [
+            {"metric": "Cell manufacturing cost", "category": "Cost", "unit": "$/kWh", "Virgin": 101.0, "Pyro": 1.0},
+            {"metric": "Recycling cost", "category": "Cost", "unit": "$/kg", "Virgin": 0.0, "Pyro": 2.0},
+        ]
+    )
+    report = pd.DataFrame(
+        [
+            {"section": "Manufacturing", "metric": "Cost", "Virgin Manufacture": 101.0, "Pyro": 90.0},
+            {"section": "Closed loop", "metric": "Cost", "Virgin Manufacture": 0.0, "Pyro": 80.0},
+        ]
+    )
+
+    output_display = production_output_display_table(output)
+    report_display = production_report_display_table(report)
+
+    assert list(output_display.columns) == ["metric", "category", "unit", "Virgin"]
+    assert output_display["metric"].tolist() == ["Cell manufacturing cost"]
+    assert list(report_display.columns) == ["metric", "Virgin Manufacture"]
+    assert report_display["metric"].tolist() == ["Cost"]
 
 
 def test_new_flow_benchmark_policy_does_not_require_legacy_excel_match():

@@ -6,6 +6,7 @@ import pandas as pd
 
 from .custom_chemistry import CUSTOM_NMC_LABEL, NMC_CATHODE_MATERIALS, custom_nmc_elemental_mass, is_custom_nmc
 from .model import Scenario, default_scenario, uses_new_recycling_flow
+from .new_flow_parameters import new_flow_parameter_value
 from .preprocessing import (
     unit_operation_table,
     _roundup,
@@ -93,29 +94,11 @@ CM_RECOVERY_OPEX_BASELINE_COSTS = {
     ),
 }
 
-NEW_CM_RECOVERY_OPEX_BASELINE_COSTS = {
-    "Hydro": CMRecoveryOpexBaselineCosts(
-        utilities=5200000.0,
-        effluent=145000.0,
-        raw_materials=33800000.0,
-    ),
-    "Direct": CMRecoveryOpexBaselineCosts(
-        utilities=1850000.0,
-        effluent=62000.0,
-        raw_materials=31200000.0,
-    ),
-}
-
 CM_RECOVERY_FEED_COSTS = {
     "Pyro": 2.3,
     "Hydro": 2.56,
     "Direct": 3.14,
     "Custom": 3.0,
-}
-
-NEW_CM_RECOVERY_FEED_COSTS = {
-    "Hydro": 2.72,
-    "Direct": 2.48,
 }
 
 CM_RECOVERY_PRODUCT_PRICES = {
@@ -494,10 +477,14 @@ def cm_recovery_opex_summary(scenario: Scenario, process: str) -> pd.DataFrame:
     annual_kg = throughput_tpy * 1000
 
     baseline_costs = (
-        NEW_CM_RECOVERY_OPEX_BASELINE_COSTS.get(process)
-        if uses_new_recycling_flow(scenario)
-        else None
-    ) or CM_RECOVERY_OPEX_BASELINE_COSTS.get(process, CM_RECOVERY_OPEX_BASELINE_COSTS["Pyro"])
+        CMRecoveryOpexBaselineCosts(
+            utilities=new_flow_parameter_value(scenario, "cm_utilities_usd_per_year", CM_RECOVERY_OPEX_BASELINE_COSTS[process].utilities),
+            effluent=new_flow_parameter_value(scenario, "cm_effluent_usd_per_year", CM_RECOVERY_OPEX_BASELINE_COSTS[process].effluent),
+            raw_materials=new_flow_parameter_value(scenario, "cm_raw_materials_usd_per_year", CM_RECOVERY_OPEX_BASELINE_COSTS[process].raw_materials),
+        )
+        if uses_new_recycling_flow(scenario) and process in {"Hydro", "Direct"}
+        else CM_RECOVERY_OPEX_BASELINE_COSTS.get(process, CM_RECOVERY_OPEX_BASELINE_COSTS["Pyro"])
+    )
     throughput_scale = throughput_tpy / CM_RECOVERY_BASELINE_THROUGHPUT_TPY if throughput_tpy > 0 else 0.0
     utility_effluent_scale = 1.0 if process == "Direct" and throughput_tpy > 0 else throughput_scale
     utilities = baseline_costs.utilities * utility_effluent_scale
@@ -578,13 +565,14 @@ def cm_recovery_opex_summary(scenario: Scenario, process: str) -> pd.DataFrame:
 
 def cm_recovery_product_outputs(scenario: Scenario, process: str) -> pd.DataFrame:
     products = _cm_recovery_product_quantities(scenario, process)
-    return pd.DataFrame(
+    records = (
         [
             {"product": product, "kg_per_kg_black_mass": quantity}
             for product, quantity in products.items()
             if quantity > 0
         ]
     )
+    return pd.DataFrame(records, columns=["product", "kg_per_kg_black_mass"])
 
 
 def _cm_recovery_product_quantities(scenario: Scenario, process: str) -> dict[str, float]:
@@ -606,10 +594,10 @@ def _cm_recovery_product_quantities(scenario: Scenario, process: str) -> dict[st
         products["Ni2+ in product"] = ni * 0.95
     elif process == "Hydro":
         if uses_new_recycling_flow(scenario):
-            products["Mn2+ in product"] = mn * 0.985
-            products["Co2+ in product"] = co * 0.985
-            products["Ni2+ in product"] = ni * 0.985
-            products["Lithium carbonate (crude)"] = li * 0.94 / 7.0 * 37.0
+            products["Mn2+ in product"] = mn * new_flow_parameter_value(scenario, "hydro_mn_recovery")
+            products["Co2+ in product"] = co * new_flow_parameter_value(scenario, "hydro_co_recovery")
+            products["Ni2+ in product"] = ni * new_flow_parameter_value(scenario, "hydro_ni_recovery")
+            products["Lithium carbonate (crude)"] = li * new_flow_parameter_value(scenario, "hydro_li_recovery") / 7.0 * 37.0
             return products
         products["Mn2+ in product"] = mn * 0.98
         products["Co2+ in product"] = co * 0.98
@@ -620,10 +608,11 @@ def _cm_recovery_product_quantities(scenario: Scenario, process: str) -> dict[st
         products["Graphite"] = graphite * 0.9
     elif process in {"Direct", "Custom"}:
         if process == "Direct" and uses_new_recycling_flow(scenario):
+            recovery = new_flow_parameter_value(scenario, "direct_rejuvenated_cathode_recovery")
             for chem in NMC_CATHODE_MATERIALS:
                 val = bm.get(chem, 0.0)
                 if val > 0:
-                    products[f"Rejuvenated {chem}"] = val * 0.97
+                    products[f"Rejuvenated {chem}"] = val * recovery
             return products
         products["Copper"] = cu * 0.9
         products["Aluminum"] = al * 0.9
@@ -664,13 +653,14 @@ def _cm_recovery_revenue_product_quantities(scenario: Scenario, process: str) ->
 
 def cm_recovery_revenue_product_outputs(scenario: Scenario, process: str) -> pd.DataFrame:
     products = _cm_recovery_revenue_product_quantities(scenario, process)
-    return pd.DataFrame(
+    records = (
         [
             {"product": product, "kg_per_kg_black_mass": quantity}
             for product, quantity in products.items()
             if quantity > 0
         ]
     )
+    return pd.DataFrame(records, columns=["product", "kg_per_kg_black_mass"])
 
 
 def cm_recovery_product_prices() -> dict[str, float]:
@@ -743,10 +733,10 @@ def cm_recovery_cost_summary(scenario: Scenario, process: str) -> pd.DataFrame:
     working_capital = opex.get("Working capital", 0.0)
     
     feed_cost_per_kg = (
-        NEW_CM_RECOVERY_FEED_COSTS.get(process)
-        if uses_new_recycling_flow(scenario)
-        else None
-    ) or CM_RECOVERY_FEED_COSTS.get(process, CM_RECOVERY_FEED_COSTS["Pyro"])
+        new_flow_parameter_value(scenario, "cm_feed_cost_usd_per_kg", CM_RECOVERY_FEED_COSTS[process])
+        if uses_new_recycling_flow(scenario) and process in {"Hydro", "Direct"}
+        else CM_RECOVERY_FEED_COSTS.get(process, CM_RECOVERY_FEED_COSTS["Pyro"])
+    )
 
     rows = [
         ("Total capital investment ($)", fixed_capital + working_capital),
