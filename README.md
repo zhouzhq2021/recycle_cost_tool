@@ -1,7 +1,7 @@
 # recycle-cost 使用说明手册
 
 [![GitHub stars](https://img.shields.io/github/stars/zhouzhq2021/recycle_cost_tool?style=social)](https://github.com/zhouzhq2021/recycle_cost_tool/stargazers)
-[![Tests](https://img.shields.io/badge/tests-105%20passed-brightgreen)](#10-开发与测试)
+[![Tests](https://img.shields.io/badge/tests-146%20passed-brightgreen)](#10-开发与测试)
 [![Python](https://img.shields.io/badge/python-3.13-blue)](pyproject.toml)
 [![Streamlit](https://img.shields.io/badge/UI-Streamlit-ff4b4b)](app.py)
 
@@ -30,9 +30,12 @@
 
 - 在 Streamlit 页面中配置电池制造、回收物料、回收工艺、正极生产和运输距离。
 - 运行内置场景预设，包括黑粉湿法回收、NMC622 电池包火法/湿法/直接回收、制造废料直接回收。
+- 使用工作流式页面完成“全局参数 -> 分支选择 -> 分支参数 -> 流程模块 -> 结果”的分析路径，并支持中文/英文界面切换。
 - 查看流程阶段、回收工艺、正极生产、电芯与电池包制造、参数表和综合输出。
 - 导出当前场景 JSON、单表 CSV，以及包含场景和全部结果表的 ZIP。
 - 在非 Streamlit 环境下用 CLI 批量运行场景并导出结果。
+- 配置 `Custom NMC` 的 Ni/Co/Mn 摩尔比例和废旧电池组成，并把自定义材料体系接入前处理、回收产物和报告输出。
+- 对 Hydro 和 Direct 回收路线选择旧流程或二次开发新流程；新流程额外参数必须由用户填写完整后才会计算。
 - 基于 Python 模块继续扩展自定义场景、参数、流程和输出，不受 Excel 页面结构限制。
 - 对 Python 结果和 LibreOffice 重算后的 Excel 结果做一致性验证。
 
@@ -72,30 +75,39 @@ http://localhost:8502
 
 页面主要区域：
 
-- `结果总览 / Overview`：核心成本、能耗、GHG 和流程汇总。
-- `回收流程 / Recycling process`：运输、拆解、预处理、黑粉回收、材料转换。
-- `正极与制造 / Cathode and Manufacturing`：正极生产、电芯制造、电池包制造。
-- `参数表 / Parameters`：当前场景使用的参数和参考表。
-- `导出 / Export`：导出场景 JSON、CSV 或完整 ZIP。
+- `首页 / Home`：确认全局参数、选择正常制备或电池回收分支。
+- `初始数据库 / Parameters`：编辑材料体系、地域、回收物料、回收工艺、正极生产和运输距离。
+- `流程模块 / Flow`：按模块查看正常制备或电池回收流程，Hydro/Direct 支持旧流程与新流程对比图。
+- `结果 / Results`：查看核心成本、收入、能耗、水耗、GHG、benchmark 诊断和导出入口。
+
+界面示例：
+
+![初始主界面](img_demo/初始主界面.png)
+
+![电池回收分支页面](img_demo/电池回收分支页面.png)
 
 ## 4. Streamlit 使用流程
 
 1. 在侧边栏选择语言和场景预设。
-2. 修改生产场景：
+2. 在首页确认两个分支共享的材料体系和地域参数。
+3. 选择正常制备或电池回收分支。
+4. 修改生产场景：
    - 电池类型：Pack / Module / Cell
    - 制造化学体系：如 `NMC(622)`、`NMC(811)`、`NCA`、`LFP`
    - 制造地点
-3. 修改回收物料：
+5. 修改回收物料：
    - 物料类型：黑粉、EOL pack/module/cell、制造废料等
    - 物料化学体系
    - 年处理量
-4. 选择回收工艺：
+6. 选择回收工艺：
    - `Pyro`
    - `Hydro`
    - `Direct`
    - `Custom`
-5. 修改正极生产和运输距离参数。
-6. 查看结果表，并在导出页下载结果。
+7. 如果选择 `Custom NMC`，可填写 Ni/Co/Mn 摩尔比例，并可覆盖废旧电池组成。
+8. 如果选择 Hydro 或 Direct，可切换旧流程或新流程。新流程中与旧流程可对应的参数会预填，额外新参数需要用户补齐后才能运行计算。
+9. 修改正极生产和运输距离参数。
+10. 查看结果表，并在导出页下载结果。
 
 上传由本工具导出的 `scenario.json` 可以恢复场景输入。
 
@@ -295,7 +307,7 @@ summary.json
 当前全量测试：
 
 ```text
-105 passed
+146 passed
 ```
 
 关键 parity 结果：
@@ -312,6 +324,8 @@ summary.json
   - `LFP`
   - `NCA`
   - `NMC(811)`
+- Hydro/Direct 新流程分支已接入用户参数门控、S-Cathode/S-Anode 前处理产物流、回收产物输出和 report/output 汇总。
+- `Custom NMC` 已支持 Ni/Co/Mn 比例、废旧电池组成覆盖、黑粉/S-Cathode 组成、Hydro 金属产物和 Direct 再生正极产物。
 - CLI 可在无 Streamlit 环境下批量导出场景结果。
 - 用户侧导出不再把 workbook 错误路径显示成假 0。
 
@@ -331,6 +345,8 @@ selected-route recycling 的矩阵摘要：
 
 - `recycled manufacturing cost` 路径在 Excel 中本身会输出错误值，因此 Python 当前显示为空。若业务上需要这个值，应新增 Python-only estimate，并明确它不是 Excel parity 值。
 - `Custom` route 已可作为完整业务路径运行；当前语义是“使用工作簿 Custom 参数列的自定义路线”，还不是自由增删单元操作、设备和化学品的流程编辑器。
+- `Custom NMC` 当前开放 Ni/Co/Mn 摩尔比例和废旧电池组成；未开放的制造、价格和环境参数仍继承 `NMC(622)`。
+- Hydro/Direct 新流程是二次开发路径。没有可靠旧模型映射的新增参数必须由用户显式填写；工具不会为这些参数写入无依据的硬编码假设。
 - output-parity 覆盖值已从 `reporting.py` 收敛到 `output_parity.py` 的 typed keys/accessors；后续仍可继续替换为自动提取的外部参数表。
 - UI 当前主要编辑单一 feedstock stream；底层 `Scenario.feedstocks` 已支持多 stream，后续可以扩展页面输入。
 - 某些详细 audit 表保留 scenario-derived 计算，而 public `Output` summary 为了 Excel parity 会使用 workbook-style 汇总缓存逻辑。
@@ -409,7 +425,21 @@ docs/analysis/                  模型分析、实现清单和 parity 报告
 - 原 workbook 对这些 route 的成本公式会返回错误值。
 - Python 版本用空值表示“不可用”，避免误报为 0。
 
-## 13. v0.2.0 发布说明
+## 13. v0.3.0 发布说明
+
+`v0.3.0` 聚焦交互式工作流、新回收流程二次开发入口和自定义材料体系。
+
+本版本完成：
+
+- Streamlit 页面重构为工作流式界面，支持首页、全局参数、分支选择、分支参数、流程模块和结果页。
+- 中英文界面文案集中到 `i18n.py`，侧边栏可切换中文/English。
+- 新增 Hydro/Direct 新旧回收流程对比图和新流程参数表；与旧流程可对应的参数使用可追溯默认值，新增参数必须由用户填写完整后才会计算。
+- 新流程前处理输出 S-Cathode、S-Anode 和电解液回收流，并接入 Hydro/Direct 回收产物、成本、收入和 report/output 汇总。
+- 新增 `Custom NMC`，支持 Ni/Co/Mn 摩尔比例、自定义废旧电池组成、组成归一化和默认组成恢复。
+- 新增界面示例图和回收流程图，便于展示正常制备分支、电池回收分支和新旧流程对比。
+- 全量测试扩展到 `146 passed`。
+
+## 14. v0.2.0 发布说明
 
 `v0.2.0` 聚焦可复现校验、Custom 路线业务化和维护性整理。
 
@@ -422,7 +452,7 @@ docs/analysis/                  模型分析、实现清单和 parity 报告
 - 项目元信息和 README 使用说明更新。
 - 全量测试扩展到 `107 passed`。
 
-## 14. v0.1.0 发布说明
+## 15. v0.1.0 发布说明
 
 `v0.1.0` 是第一个面向公开展示的 Python 实现版本。
 
@@ -447,7 +477,7 @@ recycle-cost is a Python/Streamlit implementation of the EverBatt battery recycl
 recycle-cost 是 EverBatt 电池回收成本模型的 Python/Streamlit 实现。它把回收经济性、材料价值、正极生产、电芯与电池包制造、能耗、水耗和温室气体排放计算整理为可测试、可审计、可批量运行、可进一步客制化的 Python 工具，同时保留原工作簿作为参数参考和回归校验基准。
 ```
 
-## 15. License / 版权
+## 16. License / 版权
 
 本项目代码以 MIT License 发布，详见 [LICENSE](LICENSE)。
 
